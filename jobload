@@ -1,0 +1,49 @@
+#!/bin/bash
+
+if [ $# -eq 0 ]
+  then
+    echo "A job id must be provided"
+else
+  jobid=$1
+#  echo "Job is $jobid"
+  jobinfo=$( squeue -o "%.10i %.15P %.12j %.12a %.10u %.8T %.12M %.12l %.6D %R" --all -j $jobid )
+
+  if [ $(echo "$jobinfo" | wc -l) -eq 1 ]
+  then
+    echo "Job ID invalid. Please enter ID of a running job."
+  else
+    echo "Basic job information:"
+    echo "$jobinfo"
+    jobstate=$( echo "$jobinfo" | grep "^ *$jobid" | awk '{print $6}' | head -1 )
+    if [[ $jobstate = RUNNING ]]
+    then
+      #NDS=$( scontrol show hostnames "$( sacct -j $jobid -X -o nodelist -n )" )
+      NDS=$( scontrol show hostnames "$( squeue -o %R -h -j $jobid )" )
+      printf "\nJob is running on nodes: %s\n\n" "$( echo $NDS | paste -s -d " " - )"
+
+      #loop through the nodes and print usage
+      #much of the main awk command taken from the pestat script
+      echo "Node utilization is:"
+      printf "%8s %6s %6s %6s %8s %8s %6s\n" "node" "cores" "load" "pct" "mem" "used" "pct"
+      for ND in $NDS; do
+        scontrol show node $ND --oneliner | awk -v node=$ND '{
+        split (substr($0,15), a, " ")
+        for (field in a) {
+          split(a[field],b,"=")
+          if (b[1]=="CPULoad") loadave=b[2]
+          else if (b[1]=="CPUTot") ncpus=b[2]
+          else if (b[1]=="RealMemory") physmem=b[2]
+          else if (b[1]=="FreeMem") availmem=b[2]
+        }
+
+        resimem = (physmem-availmem)/1024
+        physmem = physmem/1024
+
+        printf ("%8s %6d %6.1f %6.1f %6.1fGB %6.1fGB %6.1f\n", node, ncpus, loadave, 100*loadave/ncpus, physmem, resimem, 100*resimem/physmem)
+        }'
+      done
+    else
+      printf "\nJob is in state %s. Please enter the ID of a running job.\n" "$jobstate"
+    fi
+  fi
+fi
