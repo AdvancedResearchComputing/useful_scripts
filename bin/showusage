@@ -205,7 +205,7 @@ function getUserAcctTotal {
   else
     echo -e "$ACCT" | awk '{ printf "Total Account Usage/Limit:     %16s", $1 }'
   fi
-  echo -e "$((BUSE/60)) $((BLIM/60)) $( echo "100 * $BUSE / $BLIM" | bc -l )" | awk '{ printf "%9s / %-8s = %2.2f\%\n", $1, $2, $3 }' 2>/dev/null
+  echo -e "$((BUSE/60)) $((BLIM/60)) $( echo "100 * $BUSE / $BLIM" | bc -l )" | awk '{ printf "%9s / %-10s = %2.2f\%\n", $1, $2, $3 }' 2>/dev/null
 }
 
 function getAccountTotals {
@@ -236,7 +236,11 @@ function getAccountTotals {
   else
     echo -e "" | awk '{printf "%5s", $1}'
   fi
-  echo -e "$ACCT $((BUSE/60)) $((BLIM/60)) $( echo "100 * $BUSE / $BLIM" | bc -l )" | awk '{ printf "%16s %8s / %-8s = %2.2f\%\n", $1, $2, $3, $4 }' 2>/dev/null
+  if [[ $BLIM -eq "N" ]]; then 
+    echo -e "$ACCT $((BUSE/60)) unlimited 0" | awk '{ printf "%16s %8s / %-10s = %2.2f\%\n", $1, $2, $3, $4 }' 2>/dev/null
+  else
+    echo -e "$ACCT $((BUSE/60)) $((BLIM/60)) $( echo "100 * $BUSE / $BLIM" | bc -l )" | awk '{ printf "%16s %8s / %-10s = %2.2f\%\n", $1, $2, $3, $4 }' 2>/dev/null
+  fi
 }
 
 function printHBar {
