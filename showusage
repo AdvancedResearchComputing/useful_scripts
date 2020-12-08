@@ -1,0 +1,303 @@
+#!/bin/sh
+
+# Write usage data to a local file
+export FN=~/.showusage/scsa.out
+if [[ ! -f "$FN" ]]
+then
+  mkdir ~/.showusage
+  touch $FN
+fi
+scontrol show assoc > $FN || exit 1
+
+
+function printUsage {
+  echo "Usage: showusage [OPTION]"
+  echo "Lists Tinkercliffs usage information about a user or bank account (current user is the default)"
+  echo "Optionally add -v or -vv for more verbose output"
+  echo
+  echo Options:
+  echo "-a,-A <ACCT1[,ACCT2[,...]]>:   Show information about this comma separated list of bank accounts"
+  echo "-u <username>:                 Show information about all bank accounts for specified user"
+  echo
+  echo "Examples:"
+  echo "   showusage                   #shows minimum verbosity for all accounts of the current user (ie. value returned by \"echo $USER\")"
+  echo "   showusage -v                #same but more verbose"
+  echo "   showusage -vv               #even more verbose"
+  echo "   showusage -v -a mylabacct   #shows verbose information about usage on the \"mylabacct\" bank account"
+  echo "   showusage -u bartleby       #shows brief information about usage on all of user \"bartleby\"'s bank accounts"
+}
+
+VFLAG=0; #default verbosity level
+
+#parse input options if provided
+while [[ $# -gt 0 ]]
+do
+  key="$1"
+  case $key in
+    --help)
+      printUsage
+      exit
+      ;;
+    -h)
+      printUsage
+      exit
+      ;;
+    -v)
+      VFLAG=1
+      shift
+      ;;
+    -vv)
+      VFLAG=2
+      shift
+      ;;
+    -u)
+      if [[ -z $2 ]]
+      then
+        echo "-u option given, but no username was specified"
+        printUsage
+        exit
+      fi
+      INPUTUSER=$2
+      shift
+      shift
+      if [[ "$(groups $INPUTUSER 2>&1)" == *"no such user"* ]]
+      then
+        echo "invalid user specified: $INPUTUSER"
+        printUsage
+        exit
+      elif [[ -z $(sacctmgr -n show assoc where user=$INPUTUSER format=account) ]]
+      then
+        echo "specified user $INPUTUSER is not a member of any slurm account"
+        exit
+      fi
+      ;;
+    -a|-A)
+      INPUTACCTLIST=$2
+      shift
+      shift
+      if [[ -z $(sacctmgr -n show assoc where account=$INPUTACCTLIST) ]]
+      then
+        echo "specified account(s) not found in database"
+        exit
+      fi
+      ;;
+  esac
+done
+
+# If not options are provided or if user not specified in option, set to current user
+if [[ -z $INPUTUSER ]]
+then
+  INPUTUSER=$USER
+fi
+
+
+function printAcctHead {
+  ACCT=$1
+  #First line of account header
+  echo
+  echo -e "" | awk '{ printf "                  |" }'
+  for ii in `seq 0 $((NType-1))`
+  do
+    if [[ $VFLAG == "2" ]]
+    then
+      echo -e "${TL[$ii]}" | awk '{ printf "%7s %15s %7s |", " ", $1, " "}'
+    elif [[ $VFLAG == "1" ]]
+    then
+      echo -e "${TL[$ii]}" | awk '{ printf "%1s %14s %1s |", " ", $1, " "}'
+    fi
+  done
+  echo -e "total"    | awk '{ printf "%11s\n", $1}'
+
+  #Second line of account header
+  echo -e "$ACCT" | awk '{ printf "%-17s |", $1 }'
+  for ii in `seq 0 $((NType-1))`
+  do
+    if [[ $VFLAG == "2" ]]
+    then
+      echo -e "core-min core-hrs bill-hrs" | awk '{ printf "%11s %9s %9s |", $1, $2, $3 }'
+    elif [[ $VFLAG == "1" ]]
+    then
+      echo -e "core-hrs bill-hrs" | awk '{ printf "%9s %9s|", $1, $2 }'
+    fi
+  done
+  echo -e "bill-hrs" | awk '{ printf "%12s\n", $1}'
+
+  #Last line of account header
+  printHBar
+}
+
+function getAccountUsage {
+  ACCT=$1
+  printAcctHead $ACCT
+  # Loop over list of users in the account
+  for UN in `sacctmgr show assoc where account=$ACCT -n format=user%25 | sort -u`
+  do
+    getAccountUserUsage $ACCT $UN
+  done
+}
+
+function getAccountUserUsage {
+  ACCT=$1; UN=$2;
+  BTOT=0; CTOT=0 #accumulators for user-account bill/cpu-minutes over all partitions
+  BACC=0; CACC=0 #accumulators for normal+dev+preemptable bill/cpu-minutes usage
+
+  echo -e "$UN" | awk '{ printf "%-18s|", $1 }'
+  for ii in `seq 0 $((NPart-1))`
+  do
+    BUSE=0; CUSE=0;
+    getAccountUserPartitionUsage $ACCT $UN ${PL[$ii]}
+    BTOT=$((BTOT+BUSE));  CTOT=$((CTOT+CUSE));
+    if [[ $ii == 0 ]] #first two partitions (normal+dev) print as one
+    then
+      BACC=$((BACC+BUSE)); CACC=$((CACC+CUSE)); continue
+    elif [[ $ii == 1 ]]
+    then
+      BACC=$((BACC+BUSE)); CACC=$((CACC+CUSE));
+      BUSE=$BACC;  CUSE=$CACC
+    fi
+    if [[ $VFLAG == "2" ]] #print cpu-minutes used when most verbose (-vv) output requested
+    then
+      echo -e "$CUSE $((CUSE/60)) $((BUSE/60))" | awk '{ printf "%12s %9s %9s|", $1, $2, $3 }'
+    elif [[ $VFLAG == "1" ]] # verbose output (-v) provides cpu-hours and billing-hours
+    then
+      echo -e "$((CUSE/60)) $((BUSE/60))" | awk '{ printf "%9s %9s|", $1, $2 }'
+    fi
+  done
+  echo -e "$((BTOT/60))" | awk '{ printf "%12s\n", $1}'
+}
+
+function getAccountUserPartitionUsage {
+  ACCT=$1; UN=$2; PART=$3;
+  STR=`cat $FN | grep -A 7 "$ACCT\ .*$UN(.*$PART\ " | tail -n 1`
+  if [[ -z "$STR" ]]
+  then
+    echo "No assocation output for $ACCT $UN $PART"
+    FLAG="NoPartData"
+    echo -e "" | awk '{ printf ""}'
+    continue
+  fi
+  BILL=`echo $STR |  cut -d, -f5 | cut -d= -f2 |  tr -d \) | tr \( " "`
+  CPU=`echo  $STR |  cut -d, -f1 | cut -d= -f3 |  tr -d \) | tr \( " "`
+  BLIM=`echo $BILL | cut -d" " -f1`;   BUSE=`echo $BILL | cut -d" " -f2`
+  CLIM=`echo $CPU | cut -d" " -f1`;    CUSE=`echo $CPU | cut -d" " -f2`
+}
+
+function getUserAcctTotal {
+  UN=$1; ACCT=$2;
+  STR=`cat $FN | grep -A 7 "$ACCT\ .*$UN(.*tion\= " | tail -n 1`
+  BILL=`echo $STR |  cut -d, -f5 | cut -d= -f2 |  tr -d \) | tr \( " "`
+  CPU=`echo  $STR |  cut -d, -f1 | cut -d= -f3 |  tr -d \) | tr \( " "`
+  BLIM=`echo $BILL | cut -d" " -f1`;   BUSE=`echo $BILL | cut -d" " -f2`
+  CLIM=`echo $CPU | cut -d" " -f1`;    CUSE=`echo $CPU | cut -d" " -f2`
+  if [[ "$BLIM" == "N" ]]
+  then
+    BLIM="None"
+    BPER=0
+  else
+    BPER=$( echo "100 * $BUSE / $BLIM" | bc -l )
+  fi
+  if [[ $VFLAG == "2" ]]
+  then
+    echo -e "$ACCT" | awk '{ printf "Total Account Usage/Limit:     %156s", $1 }'
+  elif [[ $VFLAG == "1" ]]
+  then
+    echo -e "$ACCT" | awk '{ printf "Total Account Usage/Limit:     %51s", $1 }'
+  else
+    echo -e "$ACCT" | awk '{ printf "Total Account Usage/Limit:     %16s", $1 }'
+  fi
+  echo -e "$((BUSE/60)) $((BLIM/60)) $( echo "100 * $BUSE / $BLIM" | bc -l )" | awk '{ printf "%9s / %-8s = %2.2f\%\n", $1, $2, $3 }' 2>/dev/null
+}
+
+function getAccountTotals {
+  ACCT=$1
+  STR=`cat $FN | grep -A 7 "$ACCT\ .*UserName=\ .*tion=\ " | tail -n 1`
+  if [[ -z "$STR" ]]
+  then
+    echo "No assocation output for $ACCT with blank Username and blank Partition"
+    continue
+  fi
+  PATTERN="    GrpTRESMins=cpu"
+  if [[ "$STR" != $PATTERN* ]]
+  then
+    echo "Unexpected output for $ACCT: $STR"
+    continue
+  fi
+  BILL=`echo $STR |  cut -d, -f5 | cut -d= -f2 |  tr -d \) | tr \( " "`
+  BLIM=`echo $BILL | cut -d" " -f1`
+  BUSE=`echo $BILL | cut -d" " -f2`
+
+  echo "" | awk '{printf "Total Account Usage/Limit:"}'
+  if [[ $VFLAG == "2" ]]
+  then
+    echo -e "" | awk '{printf "%145s", $1}'
+  elif [[ $VFLAG == "1" ]]
+  then
+    echo -e "" | awk '{printf "%40s", $1}'
+  else
+    echo -e "" | awk '{printf "%5s", $1}'
+  fi
+  echo -e "$ACCT $((BUSE/60)) $((BLIM/60)) $( echo "100 * $BUSE / $BLIM" | bc -l )" | awk '{ printf "%16s %8s / %-8s = %2.2f\%\n", $1, $2, $3, $4 }' 2>/dev/null
+}
+
+function printHBar {
+  #Separator before account summary
+  echo -e "" | awk '{ printf "-----------------" }'
+  for ii in `seq 0 $((NType-1))`
+  do
+  if [[ $VFLAG == "2" ]]
+  then
+    echo -e "" | awk '{ printf "-----------------------------------" }'
+  else
+    echo -e "" | awk '{ printf "------------------------" }'
+  fi
+  done
+  echo -e "" | awk '{ printf "----------------------\n" }'
+}
+
+if [[ $VFLAG == "2" ]]
+then
+  export PL=(normal_q dev_q largemem_q intel_q interactive_q preemptable_q)
+  export NPart=6
+  export TL=(normal\+dev largemem intel interactive preemptable)
+  export NType=5
+elif [[ $VFLAG == "1" ]]
+then
+  export PL=(normal_q dev_q largemem_q intel_q interactive_q preemptable_q)
+  export NPart=4
+  export TL=(normal\+dev largemem intel)
+  export NType=3
+else
+  echo
+fi
+
+if [[ -z $INPUTACCTLIST ]]
+then
+  ACCTLIST=$(sacctmgr show assoc where user=$INPUTUSER -n format=account%25 | sort -u)
+else
+  ACCTLIST=$(echo $INPUTACCTLIST | tr , " ")
+fi
+
+  for ACCT in $ACCTLIST
+  do
+    if [[ "$ACCT" == "tcfriendly" ]]
+    then
+      #echo "skipping tcfriendly account"
+      continue
+    elif [[ "$ACCT" = "personal" ]]
+    then
+      if [[ $VFLAG == "1" ]] || [[ $VFLAG == "2" ]]
+      then
+        printAcctHead $ACCT
+      fi
+      getUserAcctTotal $INPUTUSER $ACCT
+    else
+      if [[ $VFLAG == "1" ]] || [[ $VFLAG == "2" ]]
+      then
+        echo
+        getAccountUsage $ACCT
+        printHBar
+      fi
+      getAccountTotals $ACCT
+    fi
+  done
+
