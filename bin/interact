@@ -1,15 +1,9 @@
-#!/bin/bash
+#!/bin/bash -l
 # Script to start interactive job on ARC systems
 # Only for clusters managed by Slurm
 
-#
-# Copied from cascades by zorba and modified 8/13/2020 to work on tinkercliffs,
-# which uses (1) a PrologSlurmctld (so the salloc with SallocDefaultComman
-# produces messages about "step creation still disabled, retrying
-# (PrologSlurmctld is still running)" before the interactive shell gets
-# launched; and, (2) a /etc/slurm/job_submit.lua script which requires that the
-# bank account be specified by the user.
-#
+#NOTE: The bash -l above is to fix PS1 for users who don't source /etc/bashrc in their ~/.bashrc
+#It may not be the ideal solution
 
 original_args="$@";
 unset p_flag
@@ -17,66 +11,130 @@ unset A_flag
 unset gres_flag
 unset gres
 unset partition
+verbose=0
 
+function printUsage {
+  echo "Request an interactive job"
+  echo "Usage: interact [OPTION] where OPTION is any valid Slurm (sbatch/salloc/srun) option, or:"
+  echo "-v,--verbose           Print the Slurm command being run before starting job (for debugging purposes)"
+  echo "-h,--help              Print this message"
+  echo
+  echo "To run, an account should be provided with -A [account] or --account=[account]. See showusage for a list of valid accounts."
+}
 
-while (( $# )); do
-  case "$1" in
-    -p )
-      p_flag="$2";
-      shift 2
-    ;;
-    --partition=* )
-      p_flag=$(echo $1 | cut -d "=" -f 2);
-      shift
-    ;;
-    -A )
-      A_flag=true;
-      shift 2
-    ;;
-    --account=* )
-      A_flag=true;
-      shift
-    ;;
-    --gres=* )
-      gres_flag=true;
-      shift
-    ;;
-    * ) break ;;
-  esac
+optspec=":hvp:A:-:"
+while getopts "$optspec" optchar; do
+    case "${optchar}" in
+        -)
+            case "${OPTARG}" in
+                help)
+                    printUsage
+                    exit 0
+                    ;;
+                partition)
+                    val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
+                    p_flag="${val}"
+                    ;;
+                partition=*)
+                    val=${OPTARG#*=}
+                    p_flag="${val}"
+                    ;;
+                account)
+                    val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
+                    #echo "Parsing option: '--${OPTARG}', value: '${val}'" >&2;
+                    A_flag=true;
+                    ;;
+                account=*)
+                    val=${OPTARG#*=}
+                    opt=${OPTARG%=$val}
+                    #echo "Parsing option: '--${opt}', value: '${val}'" >&2
+                    A_flag=true;
+                    ;;
+                gres)
+                    val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
+                    #echo "Parsing option: '--${OPTARG}', value: '${val}'" >&2;
+                    ;;
+                gres=*)
+                    val=${OPTARG#*=}
+                    opt=${OPTARG%=$val}
+                    #echo "Parsing option: '--${opt}', value: '${val}'" >&2
+                    ;;
+                verbose)
+                    verbose=$((verbose+1))
+                    ;;
+                *)
+                    #break; #no break as we want to let slurm options pass through and continue parsing
+                    ;;
+            esac;;
+        p)
+            p_flag="${OPTARG}";
+            ;;
+        A)
+            A_flag="${OPTARG}";
+            ;;
+        v)
+            verbose=$((verbose+1))
+            ;;
+        -h)
+          printUsage
+          exit
+          ;;
+        *)
+            #break; #no break as we want to let slurm options pass through and continue parsing
+            ;;
+    esac
 done
 
-#
-# Commented out by zorba, since does not work with our
-# /etc/slurm/job_submit.lua script:
-### If account not specified by user
-##if [ -z "$A_flag" ]
-##then
-##  # Get default account for user from Slurm
-##  account=`scontrol show assoc users=$USER flags=users | grep -E -o "DefAccount=\S*" | tr = " " | awk '{print $2}'`
-##  # Detect account = "(null)"
-##  if [[ "$account" = "(null)" ]]
-##  then
-##    echo "Could not find a default account/allocation for $USER. Quitting."
-##    exit 1
-##  fi
-##  echo "Using $account, the default allocation/account for $USER."
-##fi
+if [[ $verbose -gt 1 ]]; then
+  echo "p_flag=$p_flag"
+  echo "A_flag=$A_flag"
+  echo "gres=$gres"
+  echo "verbose=$verbose"
+fi
 
-if [ -n "$p_flag" ]
-then
+
+# If account not specified by user
+if [ -z "$A_flag" ]; then
+  #The following appears to work to get a default account (including on TinkerCliffs)
+  #However, we have disabled it for the time being so that users have to explicitly request paid accounts
+  ## Get default account for user from Slurm
+  #account=`scontrol show assoc users=$USER flags=users | grep -E -o "DefAccount=\S*" | tr = " " | awk '{print $2}'`
+  ## Detect account = "(null)"
+  #if [[ "$account" = "(null)" ]]; then
+  #  echo "Could not find a default account/allocation for $USER. Quitting."
+  #  exit 1
+  #fi
+  #echo "Using $account, the default allocation/account for $USER."
+  #account="--account=$account"
+
+  #Instead, just error out
+  echo "An account must be specified with -A or --account. A list of valid accounts (and remaining balances) can be found with showusage."
+  exit 1
+fi
+
+# If partition not specified by user, use the default
+if [ -n "$p_flag" ]; then
   # If user requests a v100 node, make sure they also get a gpu allocated
-  if echo "$p_flag" | grep -q "^v100_\w\+_q$\|^k80_q$" && [[ -z "$gres_flag" ]]
-    then
+  if echo "$p_flag" | grep -q "^v100_\w\+_q$\|^k80_q$" && [[ -z "$gres_flag" ]]; then
     echo " --- GPU partition/queue specified, but no GPU requested: adding --gres=gpu:1"
     gres="--gres=gpu:1"
     partition=""
   fi
-  # all jobs on HU get a GPU and go to normal_q
-elif [[ "$SYSNAME" = "huckleberry" ]]
-  then
+# all jobs on TC go to interactive_q
+elif [[ "$SYSNAME" = "tinkercliffs" ]]; then
+  echo " --- setting --partition=interactive_q"
+  partition="--partition=interactive_q"
+# all jobs on HU get a GPU and go to normal_q
+elif [[ "$SYSNAME" = "huckleberry" ]]; then
   echo " --- setting --partition=normal_q and --gres=gpu:1"
   partition="--partition=normal_q"
   gres="--gres=gpu:1"
+# all jobs on IN get a GPU and go to t4_dev_q
+elif [[ "$SYSNAME" = "infer" ]]; then
+  echo " --- setting --partition=t4_dev_q and --gres=gpu:1"
+  partition="--partition=t4_dev_q"
+  gres="--gres=gpu:1"
+#otherwise use dev_q
 else
   echo " --- No partition/queue specified: setting --partition=dev_q"
   partition="--partition=dev_q"
@@ -87,9 +145,8 @@ fi
 # --ntasks=1
 # --time=00:30:00
 # --partition=dev_q
-# --job-name=interact
-#
-# Modified by zorba, since SallocDefaultComman does not work well with our
-# PrologSlurmctld command:
-##salloc $partition $gres --job-name="INTERACT" $original_args
-srun $partition $gres --job-name="INTERACT" $original_args --pty $SHELL
+#srun $partition $account $gres --job-name="INTERACT" $original_args --pty $SHELL
+cmd="srun $partition $account $gres --job-name='INTERACT' $original_args --pty $SHELL"
+[[ $verbose -gt 0 ]] && echo "Running: $cmd" #print the command being run if user requested verbose mode
+$cmd
+
