@@ -5,96 +5,60 @@
 #NOTE: The bash -l above is to fix PS1 for users who don't source /etc/bashrc in their ~/.bashrc
 #It may not be the ideal solution
 
-original_args="$@";
-unset p_flag
-unset A_flag
-unset gres_flag
-unset gres
-unset partition
-verbose=0
+#NOTE (jkrometi, 2/2/2021):
+# Argument parsing with getopts has been removed because it's not really designed
+# to pass through unknown arguments (in this case to srun). Users could break the
+# simpler checks below with weird options, e.g., by naming their job "hi
+# --account" but they should cover the vast majority of cases.
 
-function printUsage {
+#user-provided arguments
+original_args="$@"
+#we'll add these
+extra_args="--job-name='INTERACT'"
+
+#system-specific defaults
+case "${SYSNAME}" in
+    tinkercliffs)
+        def_partition="interactive_q"
+        def_gres=""
+        ;;
+    infer)
+        def_partition="t4_dev_q"
+        def_gres="gpu:1"
+        ;;
+    huckleberry)
+        def_partition="normal_q"
+        def_gres="gpu:1"
+        ;;
+    cascades)
+        def_partition="dev_q"
+        def_gres=""
+        #special gres if job mentions v100 or k80 partitions
+        echo "$original_args" | grep -q "v100_\w\+_q$\|k80_q$" && def_gres="gpu:1"
+        ;;
+    *)
+        def_partition="dev_q"
+        def_gres=""
+        ;;
+esac
+
+# Print help if requested or if no argument is provided
+if [[ " $original_args" == *" --help"* || $# -eq 0 ]]; then 
   echo "Request an interactive job"
-  echo "Usage: interact [OPTION] where OPTION is any valid Slurm (sbatch/salloc/srun) option, or:"
-  echo "-v,--verbose           Print the Slurm command being run before starting job (for debugging purposes)"
-  echo "-h,--help              Print this message"
+  echo "Usage: interact [OPTIONS]"
+  echo "where OPTIONS are any valid Slurm (sbatch/salloc/srun) options, or:"
+  echo "  --verbose     Print the Slurm command being run before starting job (for debugging purposes)"
+  echo "  --help        Print this message"
   echo
   echo "To run, an account should be provided with -A [account] or --account=[account]. See showusage for a list of valid accounts."
-}
-
-optspec=":hvp:A:-:"
-while getopts "$optspec" optchar; do
-    case "${optchar}" in
-        -)
-            case "${OPTARG}" in
-                help)
-                    printUsage
-                    exit 0
-                    ;;
-                partition)
-                    val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
-                    p_flag="${val}"
-                    ;;
-                partition=*)
-                    val=${OPTARG#*=}
-                    p_flag="${val}"
-                    ;;
-                account)
-                    val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
-                    #echo "Parsing option: '--${OPTARG}', value: '${val}'" >&2;
-                    A_flag=true;
-                    ;;
-                account=*)
-                    val=${OPTARG#*=}
-                    opt=${OPTARG%=$val}
-                    #echo "Parsing option: '--${opt}', value: '${val}'" >&2
-                    A_flag=true;
-                    ;;
-                gres)
-                    val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
-                    #echo "Parsing option: '--${OPTARG}', value: '${val}'" >&2;
-                    ;;
-                gres=*)
-                    val=${OPTARG#*=}
-                    opt=${OPTARG%=$val}
-                    #echo "Parsing option: '--${opt}', value: '${val}'" >&2
-                    ;;
-                verbose)
-                    verbose=$((verbose+1))
-                    ;;
-                *)
-                    #break; #no break as we want to let slurm options pass through and continue parsing
-                    ;;
-            esac;;
-        p)
-            p_flag="${OPTARG}";
-            ;;
-        A)
-            A_flag="${OPTARG}";
-            ;;
-        v)
-            verbose=$((verbose+1))
-            ;;
-        -h)
-          printUsage
-          exit
-          ;;
-        *)
-            #break; #no break as we want to let slurm options pass through and continue parsing
-            ;;
-    esac
-done
-
-if [[ $verbose -gt 1 ]]; then
-  echo "p_flag=$p_flag"
-  echo "A_flag=$A_flag"
-  echo "gres=$gres"
-  echo "verbose=$verbose"
+  exit
 fi
 
+# Add verbosity if requested
+[[ " $original_args" == *" --verbose"* ]] && verbose=1 || verbose=0
 
 # If account not specified by user
-if [ -z "$A_flag" ]; then
+if [[ ! " $original_args" == *" -A"* && ! " $original_args" == *" --account"* ]]; then 
   #The following appears to work to get a default account (including on TinkerCliffs)
   #However, we have disabled it for the time being so that users have to explicitly request paid accounts
   ## Get default account for user from Slurm
@@ -105,48 +69,31 @@ if [ -z "$A_flag" ]; then
   #  exit 1
   #fi
   #echo "Using $account, the default allocation/account for $USER."
-  #account="--account=$account"
+  #extra_args="--account=$account $extra_args"
 
   #Instead, just error out
   echo "An account must be specified with -A or --account. A list of valid accounts (and remaining balances) can be found with showusage."
   exit 1
 fi
 
-# If partition not specified by user, use the default
-if [ -n "$p_flag" ]; then
-  # If user requests a v100 node, make sure they also get a gpu allocated
-  if echo "$p_flag" | grep -q "^v100_\w\+_q$\|^k80_q$" && [[ -z "$gres_flag" ]]; then
-    echo " --- GPU partition/queue specified, but no GPU requested: adding --gres=gpu:1"
-    gres="--gres=gpu:1"
-    partition=""
-  fi
-# all jobs on TC go to interactive_q
-elif [[ "$SYSNAME" = "tinkercliffs" ]]; then
-  echo " --- setting --partition=interactive_q"
-  partition="--partition=interactive_q"
-# all jobs on HU get a GPU and go to normal_q
-elif [[ "$SYSNAME" = "huckleberry" ]]; then
-  echo " --- setting --partition=normal_q and --gres=gpu:1"
-  partition="--partition=normal_q"
-  gres="--gres=gpu:1"
-# all jobs on IN get a GPU and go to t4_dev_q
-elif [[ "$SYSNAME" = "infer" ]]; then
-  echo " --- setting --partition=t4_dev_q and --gres=gpu:1"
-  partition="--partition=t4_dev_q"
-  gres="--gres=gpu:1"
-#otherwise use dev_q
-else
-  echo " --- No partition/queue specified: setting --partition=dev_q"
-  partition="--partition=dev_q"
+# If partition not specified by user
+if [[ ! " $original_args" == *" -p"* && ! " $original_args" == *" --partition"* ]]; then 
+  echo " --- No partition specified: setting --partition=$def_partition"
+  extra_args="--partition=$def_partition $extra_args"
 fi
 
-# Unspecified defaults apply as follows, by may be over-ridden by explicityly specifying them
-# --nodes=1
-# --ntasks=1
-# --time=00:30:00
-# --partition=dev_q
-#srun $partition $account $gres --job-name="INTERACT" $original_args --pty $SHELL
-cmd="srun $partition $account $gres --job-name='INTERACT' $original_args --pty $SHELL"
-[[ $verbose -gt 0 ]] && echo "Running: $cmd" #print the command being run if user requested verbose mode
-$cmd
+# If gres not specified by user (and def_gres not empty)
+if [[ ! " $original_args" == *" --gres"* && ! -z $def_gres ]]; then 
+  echo " --- No gres specified: setting --gres=$def_gres"
+  extra_args="--gres=$def_gres $extra_args"
+fi
 
+
+#Command to be run
+# Later arguments appear to be given priority so add user-provided
+# arguments second on the off chance of conflicts
+cmd="srun $extra_args $original_args --pty $SHELL"
+#Print the command being run if user requested verbose mode
+[[ $verbose -gt 0 ]] && echo "Running: $cmd" 
+#Run
+$cmd
