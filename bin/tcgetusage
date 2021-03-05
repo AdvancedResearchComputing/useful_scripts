@@ -1,0 +1,20 @@
+#!/bin/bash
+tcgu_ACCT=$1
+
+CHK=`sshare -a -A $tcgu_ACCT -u='' --long --format=account,grptresmins -nP`
+
+tcgu_PACCT=`tcgetparent $tcgu_ACCT`
+
+if [[ "$tcgu_PACCT" == "root" ]]; then
+  # print parent account info with header
+  tcgetusage_single $tcgu_ACCT
+  uPID=$tcgu_ACCT
+  tcgu_CHILDREN=`sshare -a -u="" -o account cluster=tinkercliffs -nP | grep -A 20 $uPID | sed -n "/$uPID/,/^.[a-z,0-9]/p" | grep -v -e "^.[a-z]"`
+  # loop over child accounts and print their account info with no header
+  for tcgu_child in $tcgu_CHILDREN; do
+    tcgetusage_single $tcgu_child "quiet"
+  done
+else 
+  # parent account is not root, so call this script again go one level up in the tree
+  tcgetusage $tcgu_PACCT
+fi
