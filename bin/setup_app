@@ -131,7 +131,8 @@ EOF
   echo "    - Edit paths (some packages don't have, e.g., an include/)"
   echo "    - Set or remove modules to load in the load() line"
   echo
-  echo "Note: You may need to use module --ignore_cache spider $app"
+  echo "Note: You may need to refresh the cache, e.g.,"
+  echo "  module --ignore_cache spider $app"
   echo "to find the module the first time."
 
   fi
