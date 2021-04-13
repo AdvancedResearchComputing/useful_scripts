@@ -83,6 +83,10 @@ if [[ -z $app || -z $ver ]]; then
   printUsage
   exit 1
 else
+
+  #slashes in version numbers can cause problems, so replace them with -
+  ver=$( echo $ver | sed 's|/|-|g' )
+
   appdir="${appbase}/${app}/${ver}"
   moddir="${modbase}/${app}"
   modfl="${moddir}/${ver}.lua"
@@ -91,6 +95,8 @@ else
   read -p "Create directories $appdir and $moddir? " -n 1 -r
   if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo
+    
+    #create directories
     mkdir -p $appdir
     mkdir -p $moddir
 
@@ -143,10 +149,6 @@ EOF
     echo "    - Replace SOFTWARE with the variable name you want to use"
     echo "    - Edit paths (some packages don't have, e.g., an include/)"
     echo "    - Set or remove modules to load in the load() line"
-    echo
-    echo "Note: You may need to refresh the cache, e.g.,"
-    echo "  module --ignore_cache spider $app"
-    echo "to find the module the first time."
 
     #if they specified --base, print an additional message
     if [[ ! -z $base ]]; then
@@ -158,6 +160,11 @@ EOF
       echo "  export MODULEPATH=\"${modbase}:\$MODULEPATH\""
       echo "to your ~/.bashrc"
     fi
+
+    echo
+    echo "Note: You may need to refresh the cache, e.g.,"
+    echo "  module --ignore_cache spider $app"
+    echo "to find the module the first time."
   else
     echo
   fi
