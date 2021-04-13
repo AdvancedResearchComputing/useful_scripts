@@ -8,12 +8,14 @@ function printUsage {
   echo "Usage: script.sh package version"
   echo 
   echo "Options:"
-  echo "  --user     Set up for personal (home directory) installation"
-  echo "  --help,-h  Print this usage message"
+  echo "  --user                   Set up for personal (home directory) installation"
+  echo "  --base dir,--base=dir    Specify other directory for installation (overrides --user)"
+  echo "  --help,-h                Print this usage message"
   echo
   echo "Examples:"
-  echo "  setup_app R 4.0.2-foss-2020b         #system-wide install"
-  echo "  setup_app --user R 4.0.2-foss-2020b  #single-user install"
+  echo "  setup_app R 4.0.2-foss-2020b         #system-wide install (arc personnel only)"
+  echo "  setup_app --user R 4.0.2-foss-2020b  #home directory install"
+  echo "  setup_app --base=/projects/myproject R 4.0.2-foss-2020b  #install to /projects/myproject"
 }
 
 #e.g., tinkercliffs-rome
@@ -23,30 +25,13 @@ sysdir=$( basename $EASYBUILD_INSTALLPATH_MODULES )
 appbase="/apps/packages/${sysdir}"
 modbase="/apps/modulefiles/${sysdir}"
 
-#parse input options if provided
-#while [[ $# -gt 0 ]]; do
-#  key="$1"
-#  case $key in
-#    --help)
-#      printUsage
-#      exit
-#      ;;
-#    -h)
-#      printUsage
-#      exit
-#      ;;
-#    --user)
-#      appbase="$HOME/apps/${sysdir}"
-#      modbase="$HOME/easybuild/modules/${sysdir}/all"
-#      shift
-#      ;;
-#    *)
-#      shift
-#      ;;
-#  esac
-#done
-
-for key in $@; do
+#parse input options
+app=""
+ver=""
+user_flag=""
+base=""
+while [[ $# -gt 0 ]]; do
+  key="$1"
   case $key in
     --help)
       printUsage
@@ -57,19 +42,47 @@ for key in $@; do
       exit
       ;;
     --user)
-      appbase="$HOME/apps/${sysdir}"
-      modbase="$HOME/easybuild/modules/${sysdir}/all"
+      user_flag=1
+      shift
+      ;;
+    --base)
+      base=$2
+      shift 2
+      ;;
+    --base=*)
+      base=${key#*=}
+      shift
+      ;;
+    -*)
+      echo "ERROR: Unrecognized flag: $key"
+      echo "Printing usage information..."
+      printUsage
+      exit 1
+      ;;
+    *) #process positional arguments: app first, then ver
+      [[ -z $app ]] && app=$1 || ver=$1
+      shift
       ;;
   esac
 done
+      
+#if they specified --user, set the directories      
+if [[ ! -z $user_flag ]]; then
+  appbase="$HOME/apps/${sysdir}"
+  modbase="$HOME/easybuild/modules/${sysdir}/all"
+fi
 
-#if the user didn't provide two inputs, print usage info and exit
-if [ ! $# -gt 1 ]; then
+#if they specified --base, set the directories      
+if [[ ! -z $base ]]; then
+  appbase="${base}/apps/${sysdir}"
+  modbase="${base}/modules/${sysdir}/all" #No real reason to include "easybuild" in directory path
+fi
+
+#if the user didn't provide an app and a version, print usage info and exit
+if [[ -z $app || -z $ver ]]; then
   printUsage
   exit 1
 else
-  app="$1"
-  ver="$2"
   appdir="${appbase}/${app}/${ver}"
   moddir="${modbase}/${app}"
   modfl="${moddir}/${ver}.lua"
@@ -123,17 +136,29 @@ prepend_path("LD_LIBRARY_PATH", "$appdir/lib64")
 load("foss/2020b")
 EOF
 
-  echo "Done. To finish your build:"
-  echo " 1. Install your app in $appdir/"
-  echo "    - Document the installation so we know how you did it"
-  echo " 2. Edit the modulefile in $modfl"
-  echo "    - Replace SOFTWARE with the variable name you want to use"
-  echo "    - Edit paths (some packages don't have, e.g., an include/)"
-  echo "    - Set or remove modules to load in the load() line"
-  echo
-  echo "Note: You may need to refresh the cache, e.g.,"
-  echo "  module --ignore_cache spider $app"
-  echo "to find the module the first time."
+    echo "Done. To finish your build:"
+    echo " 1. Install your app in $appdir/"
+    echo "    - Document the installation so we know how you did it"
+    echo " 2. Edit the modulefile in $modfl"
+    echo "    - Replace SOFTWARE with the variable name you want to use"
+    echo "    - Edit paths (some packages don't have, e.g., an include/)"
+    echo "    - Set or remove modules to load in the load() line"
+    echo
+    echo "Note: You may need to refresh the cache, e.g.,"
+    echo "  module --ignore_cache spider $app"
+    echo "to find the module the first time."
 
+    #if they specified --base, print an additional message
+    if [[ ! -z $base ]]; then
+      echo
+      echo "Note: You specified a non-standard directory. You will need to add"
+      echo "${modbase}"
+      echo "to MODULEPATH to be able to load the module."
+      echo "This can be done by adding, e.g.,"
+      echo "  export MODULEPATH=\"${modbase}:\$MODULEPATH\""
+      echo "to your ~/.bashrc"
+    fi
+  else
+    echo
   fi
 fi
