@@ -109,7 +109,7 @@ else
 whatis("Name: $app")
 whatis("Version: $ver")
 whatis("Description: SOFTWAREDESCRIPTION")
-whatis("URL: SOFTWAREURL"
+whatis("URL: SOFTWAREURL")
  
 help([[
 SOFTWAREDESCRIPTION
