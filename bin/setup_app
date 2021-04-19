@@ -1,6 +1,6 @@
 #!/bin/bash
-#Script for ARC personnel to set up a directory and 
-#modulefile for a custom software installation
+#Script to set up a directory and modulefile 
+#for a custom software installation
 
 #usage info
 function printUsage {
@@ -8,27 +8,28 @@ function printUsage {
   echo "Usage: script.sh package version"
   echo 
   echo "Options:"
-  echo "  --user                   Set up for personal (home directory) installation"
-  echo "  --base dir,--base=dir    Specify other directory for installation (overrides --user)"
+  #echo "  --user                   Set up for personal (home directory) installation"
+  echo "  --base dir,--base=dir    Specify other directory for installation"
+  echo "  --system                 System-wide install in /apps (arc personnel only, overridden by --base)"
   echo "  --help,-h                Print this usage message"
   echo
   echo "Examples:"
-  echo "  setup_app R 4.0.2-foss-2020b         #system-wide install (arc personnel only)"
-  echo "  setup_app --user R 4.0.2-foss-2020b  #home directory install"
+  echo "  setup_app R 4.0.2-foss-2020b                             #home directory install"
   echo "  setup_app --base=/projects/myproject R 4.0.2-foss-2020b  #install to /projects/myproject"
+  echo "  setup_app --system R 4.0.2-foss-2020b                    #system-wide install (arc personnel only)"
 }
 
 #e.g., tinkercliffs-rome
 sysdir=$( basename $EASYBUILD_INSTALLPATH_MODULES )
 
 #defaults for system-wide installations
-appbase="/apps/packages/${sysdir}"
-modbase="/apps/modulefiles/${sysdir}"
+appbase="$HOME/apps/${sysdir}"
+modbase="$HOME/easybuild/modules/${sysdir}/all"
 
 #parse input options
 app=""
 ver=""
-user_flag=""
+system_flag=""
 base=""
 while [[ $# -gt 0 ]]; do
   key="$1"
@@ -42,7 +43,11 @@ while [[ $# -gt 0 ]]; do
       exit
       ;;
     --user)
-      user_flag=1
+      echo "Ignoring deprecated option --user (home directory install is now the default)..."
+      shift
+      ;;
+    --system)
+      system_flag=1
       shift
       ;;
     --base)
@@ -66,10 +71,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
       
-#if they specified --user, set the directories      
-if [[ ! -z $user_flag ]]; then
-  appbase="$HOME/apps/${sysdir}"
-  modbase="$HOME/easybuild/modules/${sysdir}/all"
+#if they specified --system, set the directories      
+if [[ ! -z $system_flag ]]; then
+  appbase="/apps/packages/${sysdir}"
+  modbase="/apps/modulefiles/${sysdir}"
 fi
 
 #if they specified --base, set the directories      
@@ -104,7 +109,7 @@ else
 whatis("Name: $app")
 whatis("Version: $ver")
 whatis("Description: SOFTWAREDESCRIPTION")
-whatis("URL: SOFTWAREURL")
+whatis("URL: SOFTWAREURL"
  
 help([[
 SOFTWAREDESCRIPTION
@@ -149,7 +154,9 @@ sed -i "s/SOFTWARE/$varnm/g" $modfl
 
     echo "Done. To finish your build:"
     echo " 1. Install your app in $appdir/"
-    echo "    - Document the installation so we know how you did it"
+    if [[ ! -z $system_flag ]]; then
+      echo "    - Document the installation so we know how you did it"
+    fi
     echo " 2. Edit the modulefile in $modfl"
     echo "    - Set or remove modules to load in the load() line"
     echo "    - Edit description and URL"
