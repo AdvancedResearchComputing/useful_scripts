@@ -142,13 +142,19 @@ prepend_path("LD_LIBRARY_PATH", "$appdir/lib64")
 load("foss/2020b")
 EOF
 
+#try to guess a variable name ("ju l-i/a" -> "JULIA")
+varnm=$( echo ${app^^} | sed 's/[- \/]//g' )
+#set variable name in the modulefile
+sed -i "s/SOFTWARE/$varnm/g" $modfl
+
     echo "Done. To finish your build:"
     echo " 1. Install your app in $appdir/"
     echo "    - Document the installation so we know how you did it"
     echo " 2. Edit the modulefile in $modfl"
-    echo "    - Replace SOFTWARE with the variable name you want to use"
-    echo "    - Edit paths (some packages don't have, e.g., an include/)"
     echo "    - Set or remove modules to load in the load() line"
+    echo "    - Edit description and URL"
+    echo "    - Check the variable names"
+    echo "    - Edit paths (some packages don't have, e.g., an include/)"
 
     #if they specified --base, print an additional message
     if [[ ! -z $base ]]; then
