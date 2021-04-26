@@ -1,0 +1,99 @@
+#!/bin/bash
+#script for looking up bgfs quota information
+#looks up the gid associated with a user or group or directory
+
+#only works on systems with beegfs, so stop right away if
+#beegfs isn't installed
+if ! hash beegfs-ctl 2>/dev/null; then 
+  echo "The command beegfs-ctl was not found, so BeeGFS does not appear "
+  echo "to be installed here. This script only works on systems where "
+  echo "BeeGFS is installed. Exiting..."
+  exit 1
+fi
+
+unset gid
+
+#usage info
+function printUsage {
+  echo "Check BeeGFS quota"
+  echo 
+  echo "Options:"
+  echo "  -u,--user user    Check for user"
+  echo "  -g,--group group  Check for group"
+  echo "  -d,--dir dir      Check for directory"
+  echo "  -i,--gid gid      Check for group id number"
+  echo "  -h,--help         Print this usage message"
+}
+
+#get the gid from the group name
+function gidFromGroup {
+  local grp=$1
+  local gid=$( getent group $grp | awk -F  ":" '{print $3}' )
+  
+  #if first attempt doesn't work, try prepending arc.
+  if [ -z $gid ]; then
+    grp="arc.$grp"
+    gid=$( getent group $grp | awk -F  ":" '{print $3}' )
+  fi
+  echo $gid
+}
+
+#get the gid from the user name
+function gidFromUser {
+  getent group $1 | awk -F  ":" '{print $3}'
+}
+
+#get the gid from the directory path
+function gidFromDir {
+  ls -ld $1 | awk '{print $4}'
+}
+
+#if they don't provide any input, print usage information 
+if [[ $# -eq 0 ]]; then
+  printUsage
+  exit 1
+fi
+
+args="$@"
+
+#process arguments
+while [[ $# -gt 0 ]]; do
+  key="$1"
+  case $key in
+    -h|--help)
+      printUsage
+      exit
+      ;;
+    -u|--user)
+      gid=$( gidFromUser $2 )
+      shift 2
+      ;;
+    -g|--group)
+      gid=$( gidFromGroup $2 )
+      shift 2
+      ;;
+    -d|--dir)
+      gid=$( gidFromDir $2 )
+      shift 2
+      ;;
+    -i|--gid)
+      gid=$2
+      shift 2
+      ;;
+    *)
+      echo "ERROR: Unrecognized input: $key"
+      echo "Printing usage information..."
+      printUsage
+      exit 1
+      ;;
+  esac
+done
+
+if [ ! -z $gid ]; then
+  beegfs-ctl --getquota --gid $gid
+else
+  echo "gid lookup failed for the following arguments:"
+  echo "  $args"
+  echo "try looking up manually and passing in with -i?"
+  exit 1
+fi
