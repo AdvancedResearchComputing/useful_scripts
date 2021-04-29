@@ -39,6 +39,53 @@ usage() {
   "
 }
 
+print_gpfs_quota() {
+	local user=$1
+	echo
+	printf "$(print_padding HEADER_COLORS[@] 'header')" \
+			"" "GPFS" "" "" "" "" ""
+	print_gpfs_work_quota "$user"
+	print_gpfs_groups_quota "$user"
+}
+
+print_beegfs_quota() {
+	local user=$1
+	local beegfs_cache="/home/$user/$CACHE_DIR/beegfs";
+	if [ -s "$beegfs_cache" ]; then
+		echo
+		printf "$(print_padding HEADER_COLORS[@] 'header')" \
+			"" "BEEGFS" "" "" "" "" ""
+
+		json=$(cat "$beegfs_cache");
+		while read line; do
+			local colors=('' '' '' '' '' '' '')
+
+			local path=$(echo $line | awk -F\| '{print $1}');
+
+			local size_bytes=$(echo $line | awk -F\| '{print $3}');
+			local limit_bytes=$(echo $line | awk -F\| '{print $2}');
+
+			local size_GiB=$(bytes_to_GiB "$size_bytes")
+			local limit_GiB=$(bytes_to_GiB "$limit_bytes")
+
+			local row=("$user" "$path" "$size_GiB" "$limit_GiB" "" "")
+			print_row row[@] colors[@];
+
+
+		done < <(cat "$beegfs_cache" | python <( echo '
+from __future__ import print_function;
+import sys, json;
+for (k, v) in json.load(sys.stdin).items(): 
+	print(k+"|" + v["limit_bytes"] + "|" + v["size_bytes"])
+	pass
+'))
+
+
+		#local row=("$user" "/projects/nml_cf_test" "25" "0" "" "")
+		#print_row row[@] colors[@];
+	fi
+}
+
 print_home_quota() {
 	local user=$1
 
@@ -46,10 +93,6 @@ print_home_quota() {
 	local home_cache="/home/$user/$CACHE_DIR/home";
 	if [ -s "$home_cache" ]; then
 		json=$(cat "$home_cache");
-	else 
-		local url="https://www.arc.vt.edu";
-		url="$url/wp-json/arc/v1/user/quota/home?pid=$user";
-		json=$(curl -m 5 -k -s "$url"); 
 	fi
 
 	[ -z "$json" ] && return; # skip when response is empty
@@ -143,7 +186,7 @@ for (k, v) in json.load(sys.stdin).items():
 
 }
 
-print_work_quota() {
+print_gpfs_work_quota() {
 	local user=$1
 
 	which mmlsquota >/dev/null 2>&1
@@ -202,7 +245,7 @@ parse_quota() {
   print_row row[@] colors[@]
 }
 
-print_groups_quota() {
+print_gpfs_groups_quota() {
 	local user=$1
 
 	which mmlsquota >/dev/null 2>&1
@@ -216,30 +259,6 @@ print_groups_quota() {
 			parse_quota "$quota" "$group_path"
 		fi
 	done
-}
-
-print_lustre_quota() {
-	local user=$1
-
-	which lfs >/dev/null 2>&1
-	[ "$?" -eq "0" ] || return;
-
-	local quota=$(lfs quota -u $user /lustre);
-	local stats=$(echo "$quota" | awk 'BEGIN { RS = "" ; FS = "\n" } { print $3 }') 
-	local current_blocksize_KiB=$(echo -e "$stats" | awk '{print $2}')
-	local maximum_blocksize_KiB=$(echo -e "$stats" | awk '{print $3}')
-
-	local current_blocksize_GiB=$(KiB_to_GiB "$current_blocksize_KiB")
-	local maximum_blocksize_GiB=$(KiB_to_GiB "$maximum_blocksize_KiB")
-
-	local current_files=$(echo "$stats" |  awk '{print $6}')
-	local maximum_files=$(echo "$stats" |  awk '{print $7}')
-
-	local row=("$user" "/lustre" "$current_blocksize_GiB" "$maximum_blocksize_GiB" \
-		"$current_files" "$maximum_files")
-	local colors=('' '' '' '' '' '' '');
-
-  print_row row[@] colors[@];
 }
 
 print_storage_header() {
@@ -293,6 +312,13 @@ bytes_to_GiB() {
 	echo "$size_in_bytes / $bytes_in_GiB" | bc -l
 }
 
+bytes_to_GB() {
+	local size_in_bytes="$1"
+	local bytes_in_GB=1000000000;
+	echo "$size_in_bytes / $bytes_in_GB" | bc -l
+}
+
+
 main() {
   while getopts "dh" opt; do
     case "$opt" in
@@ -317,9 +343,9 @@ main() {
 	print_storage_header;
 	for user in $user_list; do
 		print_home_quota "$user"
-		print_work_quota "$user"
-		print_groups_quota "$user"
-		print_lustre_quota "$user"
+
+		print_gpfs_quota "$user"
+		print_beegfs_quota  "$user"
 
 		print_alloc_quotas "$user"
 	done
