@@ -41,6 +41,10 @@ usage() {
 
 print_gpfs_quota() {
 	local user=$1
+
+	which mmlsquota >/dev/null 2>&1
+	[ "$?" -eq "0" ] || return;
+
 	echo
 	printf "$(print_padding HEADER_COLORS[@] 'header')" \
 			"" "GPFS" "" "" "" "" ""
