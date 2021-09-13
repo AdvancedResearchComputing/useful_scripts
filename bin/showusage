@@ -72,7 +72,7 @@ do
       fi
       ;;
     -a|-A)
-      INPUTACCTLIST=$2
+      INPUTACCTLIST=$(echo $2 | tr '[:upper:]' '[:lower:]')
       shift
       shift
       if [[ -z $(sacctmgr -n show assoc where account=$INPUTACCTLIST) ]]
