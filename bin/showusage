@@ -1,21 +1,13 @@
 #!/bin/sh
 
-# Write usage data to a local file
-export FN=~/.showusage/scsa.out
-if [[ ! -f "$FN" ]]
-then
-  mkdir ~/.showusage
-  touch $FN
-fi
-scontrol show assoc > $FN || exit 1
-
+VFLAG=0; #default verbosity level
 
 function printUsage {
   echo "Usage: showusage [OPTION]"
   echo "Lists Tinkercliffs usage information about a user or bank account (current user is the default)"
-  echo "Optionally add -v or -vv for more verbose output"
+  echo "Add -v or -vv for more verbose output"
   echo
-  echo Options:
+  echo "Options (choose only one of -A or -u). Any other input options will print this message and exit:"
   echo "-a,-A <ACCT1[,ACCT2[,...]]>:   Show information about this comma separated list of bank accounts"
   echo "-u <username>:                 Show information about all bank accounts for specified user"
   echo
@@ -27,7 +19,19 @@ function printUsage {
   echo "   showusage -u bartleby       #shows brief information about usage on all of user \"bartleby\"'s bank accounts"
 }
 
-VFLAG=0; #default verbosity level
+function validateUser {
+  if [[ "$(groups $INPUTUSER 2>&1)" == *"no such user"* ]]
+  then
+    echo "invalid user specified: $INPUTUSER"
+    printUsage
+    exit
+  elif [[ -z $(sacctmgr -n show assoc where user=$INPUTUSER format=account) ]]
+  then
+    echo "specified user $INPUTUSER is not a member of any slurm account"
+    exit
+  fi
+}
+
 
 #parse input options if provided
 while [[ $# -gt 0 ]]
@@ -60,16 +64,7 @@ do
       INPUTUSER=$2
       shift
       shift
-      if [[ "$(groups $INPUTUSER 2>&1)" == *"no such user"* ]]
-      then
-        echo "invalid user specified: $INPUTUSER"
-        printUsage
-        exit
-      elif [[ -z $(sacctmgr -n show assoc where user=$INPUTUSER format=account) ]]
-      then
-        echo "specified user $INPUTUSER is not a member of any slurm account"
-        exit
-      fi
+      validateUser $INPUTUSER
       ;;
     -a|-A)
       INPUTACCTLIST=$(echo $2 | tr '[:upper:]' '[:lower:]')
@@ -81,15 +76,19 @@ do
         exit
       fi
       ;;
+    *)
+      printUsage
+      exit
+      ;;
   esac
 done
 
-# If not options are provided or if user not specified in option, set to current user
+# If no options are provided or if user not specified in option, set to current user
 if [[ -z $INPUTUSER ]]
 then
-  INPUTUSER=$USER
+  INPUTUSER=$(id -un)
+  validateUser
 fi
-
 
 function printAcctHead {
   ACCT=$1
@@ -258,6 +257,19 @@ function printHBar {
   echo -e "" | awk '{ printf "----------------------\n" }'
 }
 
+# Main function begins here
+# requires:
+#     INPUTUSER to be set as a valid user
+# optionally accepts:
+#     INPUTACCTLIST as a comma-separated list of valid accounts
+# Write usage data to a local file
+export FN=~/.showusage/scsa.out
+if [[ ! -f "$FN" ]]
+then
+  mkdir ~/.showusage
+  touch $FN
+fi
+scontrol show assoc > $FN || exit 1
 if [[ $VFLAG == "2" ]]
 then
   export PL=(normal_q dev_q largemem_q intel_q interactive_q preemptable_q)
@@ -276,7 +288,7 @@ fi
 
 if [[ -z $INPUTACCTLIST ]]
 then
-  ACCTLIST=$(sacctmgr show assoc where user=$INPUTUSER -n format=account%25 | sort -u)
+  INPUTACCTLIST=$(sacctmgr show assoc where user=$INPUTUSER -n format=account -P | sort -u)
 else
   ACCTLIST=$(echo $INPUTACCTLIST | tr , " ")
 fi
