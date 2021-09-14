@@ -20,16 +20,19 @@ function printUsage {
 }
 
 function validateUser {
-  if [[ "$(groups $INPUTUSER 2>&1)" == *"no such user"* ]]
+  id -nu $INPUTUSER >/dev/null 2>&1
+  if [[ "$?" != "0" ]] # id command above exited with error
   then
-    echo "invalid user specified: $INPUTUSER"
-    printUsage
+    echo "invalid username specified: $INPUTUSER"
+    echo
     exit
   elif [[ -z $(sacctmgr -n show assoc where user=$INPUTUSER format=account) ]]
   then
     echo "specified user $INPUTUSER is not a member of any slurm account"
+    echo
     exit
   fi
+  #echo "verified user: $INPUTUSER"
 }
 
 
@@ -288,7 +291,8 @@ fi
 
 if [[ -z $INPUTACCTLIST ]]
 then
-  INPUTACCTLIST=$(sacctmgr show assoc where user=$INPUTUSER -n format=account -P | sort -u)
+  ACCTLIST=$(sacctmgr show assoc where user=$INPUTUSER -n format=account -P | sort -u | tr "\n" " ")
+  #echo "Found accounts $INPUTACCTLIST for user $INPUTUSER"
 else
   ACCTLIST=$(echo $INPUTACCTLIST | tr , " ")
 fi
