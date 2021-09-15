@@ -1,15 +1,18 @@
 #!/bin/sh
 
 VFLAG=0; #default verbosity level
+unset DEBUGFLAG; #default debug state is null
 
 function printUsage {
   echo "Usage: showusage [OPTION]"
   echo "Lists Tinkercliffs usage information about a user or bank account (current user is the default)"
+  echo
   echo "Add -v or -vv for more verbose output"
+  echo "Add --debug for additional, admin-oriented information about what the command is doing"
   echo
   echo "Options (choose only one of -A or -u). Any other input options will print this message and exit:"
-  echo "-a,-A <ACCT1[,ACCT2[,...]]>:   Show information about this comma separated list of bank accounts"
-  echo "-u <username>:                 Show information about all bank accounts for specified user"
+  echo " -a,-A <ACCT1[,ACCT2[,...]]>:   Show information about this comma separated list of bank accounts"
+  echo " -u <username>:                 Show information about all bank accounts for specified user"
   echo
   echo "Examples:"
   echo "   showusage                   #shows minimum verbosity for all accounts of the current user (ie. value returned by \"echo $USER\")"
@@ -18,6 +21,7 @@ function printUsage {
   echo "   showusage -v -a mylabacct   #shows verbose information about usage on the \"mylabacct\" bank account"
   echo "   showusage -u bartleby       #shows brief information about usage on all of user \"bartleby\"'s bank accounts"
 }
+
 
 function validateUser {
   id -nu $INPUTUSER >/dev/null 2>&1
@@ -32,7 +36,7 @@ function validateUser {
     echo
     exit
   fi
-  #echo "verified user: $INPUTUSER"
+  [[ $DEBUGFLAG ]] && echo "verified user: $INPUTUSER"
 }
 
 
@@ -79,6 +83,10 @@ do
         exit
       fi
       ;;
+    --debug)
+      DEBUGFLAG=1
+      shift
+      ;;
     *)
       printUsage
       exit
@@ -92,6 +100,7 @@ then
   INPUTUSER=$(id -un)
   validateUser
 fi
+
 
 function printAcctHead {
   ACCT=$1
@@ -128,15 +137,23 @@ function printAcctHead {
   printHBar
 }
 
+
 function getAccountUsage {
   ACCT=$1
   printAcctHead $ACCT
   # Loop over list of users in the account
-  for UN in `sacctmgr show assoc where account=$ACCT -n format=user%25 | sort -u`
+  for UN in `sacctmgr show assoc where account=$ACCT -nP format=user | sort -u`
   do
-    getAccountUserUsage $ACCT $UN
+    if [[ "0" == "$(sacctmgr show assoc where cluster=$SYSNAME account=$ACCT user=$UN partition='' format=GrpSubmit -nP)" ]]
+    then
+      [[ $DEBUGFLAG ]] && echo "getAccountUsage: $UN is not active on account $ACCT, skipping..."
+      continue
+    else
+      getAccountUserUsage $ACCT $UN
+    fi
   done
 }
+
 
 function getAccountUserUsage {
   ACCT=$1; UN=$2;
@@ -170,10 +187,10 @@ function getAccountUserUsage {
 
 function getAccountUserPartitionUsage {
   ACCT=$1; UN=$2; PART=$3;
-  STR=`cat $FN | grep -A 7 "$ACCT\ .*$UN(.*$PART\ " | tail -n 1`
+  STR=`grep -A 7 "$ACCT\ .*$UN(.*$PART\ " $FN | tail -n 1`
   if [[ -z "$STR" ]]
   then
-    echo "No assocation output for $ACCT $UN $PART"
+    [[ $DEBUGFLAG ]] && echo "No assocation output for $ACCT $UN $PART"
     FLAG="NoPartData"
     echo -e "" | awk '{ printf ""}'
     continue
@@ -186,7 +203,7 @@ function getAccountUserPartitionUsage {
 
 function getUserAcctTotal {
   UN=$1; ACCT=$2;
-  STR=`cat $FN | grep -A 7 "$ACCT\ .*$UN(.*tion\= " | tail -n 1`
+  STR=`grep -A 7 "$ACCT\ .*$UN(.*tion\= " $FN | tail -n 1`
   BILL=`echo $STR |  cut -d, -f5 | cut -d= -f2 |  tr -d \) | tr \( " "`
   CPU=`echo  $STR |  cut -d, -f1 | cut -d= -f3 |  tr -d \) | tr \( " "`
   BLIM=`echo $BILL | cut -d" " -f1`;   BUSE=`echo $BILL | cut -d" " -f2`
@@ -212,7 +229,7 @@ function getUserAcctTotal {
 
 function getAccountTotals {
   ACCT=$1
-  STR=`cat $FN | grep -A 7 "$ACCT\ .*UserName=\ .*tion=\ " | tail -n 1`
+  STR=`grep -A 7 "$ACCT\ .*UserName=\ .*tion=\ " $FN | tail -n 1`
   if [[ -z "$STR" ]]
   then
     echo "No assocation output for $ACCT with blank Username and blank Partition"
@@ -260,9 +277,26 @@ function printHBar {
   echo -e "" | awk '{ printf "----------------------\n" }'
 }
 
+function validateAccount {
+  if [[ -z $(sacctmgr show account $ACCT) ]]
+  then
+    [[ $DEBUGFLAG ]] &&  echo "account not found in slurm database $ACCT, skipping..."
+    continue
+  elif [[ "0" == $( sacctmgr show assoc where cluster=$SYSNAME account=$ACCT user="" partition="" format=GrpSubmit -nP ) ]]
+  then
+    [[ $DEBUGFLAG ]] &&  echo "account $ACCT is not active according to the Slurm database, skipping..."
+    continue
+  elif [[ "0" == $( sacctmgr show assoc where cluster=$SYSNAME account=$ACCT user=$INPUTUSER partition="" format=GrpSubmit -nP ) ]]
+  then
+    [[ $DEBUGFLAG ]] && echo "user $INPUTUSER is not an active user of account $ACCT according to Slurm database, skipping..."
+    continue
+  fi
+}
+
 # Main function begins here
 # requires:
 #     INPUTUSER to be set as a valid user
+#     SYSNAME to be set as the cluster name
 # optionally accepts:
 #     INPUTACCTLIST as a comma-separated list of valid accounts
 # Write usage data to a local file
@@ -272,7 +306,9 @@ then
   mkdir ~/.showusage
   touch $FN
 fi
-scontrol show assoc > $FN || exit 1
+#scontrol show assoc > $FN || exit 1
+date > $FN
+
 if [[ $VFLAG == "2" ]]
 then
   export PL=(normal_q dev_q largemem_q intel_q interactive_q preemptable_q)
@@ -292,16 +328,19 @@ fi
 if [[ -z $INPUTACCTLIST ]]
 then
   ACCTLIST=$(sacctmgr show assoc where user=$INPUTUSER -n format=account -P | sort -u | tr "\n" " ")
-  #echo "Found accounts $INPUTACCTLIST for user $INPUTUSER"
+  [[ $DEBUGFLAG ]] && echo "Found accounts $ACCTLIST for user $INPUTUSER"
 else
   ACCTLIST=$(echo $INPUTACCTLIST | tr , " ")
 fi
 
   for ACCT in $ACCTLIST
   do
+    validateAccount
+    #/usr/bin/time -f %E scontrol show assoc account=$ACCT flags=assoc >> $FN
+    scontrol show assoc account=$ACCT flags=assoc >> $FN
     if [[ "$ACCT" == "tcfriendly" ]]
     then
-      #echo "skipping tcfriendly account"
+      [[ $DEBUGFLAG ]] && echo "skipping tcfriendly account"
       continue
     elif [[ "$ACCT" = "personal" ]]
     then
