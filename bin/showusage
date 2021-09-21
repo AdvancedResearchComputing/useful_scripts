@@ -1,7 +1,8 @@
-#!/bin/sh
+#!/bin/bash
 
 VFLAG=0; #default verbosity level
 unset DEBUGFLAG; #default debug state is null
+unset AFLAG;
 
 function printUsage {
   echo "Usage: showusage [OPTION]"
@@ -30,13 +31,16 @@ function validateUser {
     echo "invalid username specified: $INPUTUSER"
     echo
     exit
-  elif [[ -z $(sacctmgr -n show assoc where user=$INPUTUSER format=account) ]]
+  fi
+  read SSU3 < <( scontrol show assoc user=$INPUTUSER flags=users | head -3 | tail -1 )
+  #if [[ -z $(sacctmgr -n show assoc where user=$INPUTUSER format=account) ]]
+  if [[ "$SSU3" == "No users currently cached in Slurm." ]]
   then
-    echo "specified user $INPUTUSER is not a member of any slurm account"
+    echo "Specified user $INPUTUSER is not found in the Slurm cache."
     echo
     exit
   fi
-  [[ $DEBUGFLAG ]] && echo "verified user: $INPUTUSER"
+  [[ $DEBUGFLAG ]] && echo "verified user with id-cmd and ctld-cache: $INPUTUSER"
 }
 
 
@@ -75,13 +79,14 @@ do
       ;;
     -a|-A)
       INPUTACCTLIST=$(echo $2 | tr '[:upper:]' '[:lower:]')
+      AFLAG=1;
       shift
       shift
-      if [[ -z $(sacctmgr -n show assoc where account=$INPUTACCTLIST) ]]
-      then
-        echo "specified account(s) not found in database"
-        exit
-      fi
+      #if [[ -z $(sacctmgr -n show assoc where account=$INPUTACCTLIST) ]]
+      #then
+      #  echo "specified account(s) not found in database"
+      #  exit
+      #fi
       ;;
     --debug)
       DEBUGFLAG=1
@@ -106,32 +111,32 @@ function printAcctHead {
   ACCT=$1
   #First line of account header
   echo
-  echo -e "" | awk '{ printf "                  |" }'
+  awk 'BEGIN { printf "%25s |", " "; exit(0) }'
   for ii in `seq 0 $((NType-1))`
   do
-    if [[ $VFLAG == "2" ]]
+    if [[ $VFLAG == "1" || $VFLAG == "2" ]]
     then
-      echo -e "${TL[$ii]}" | awk '{ printf "%7s %15s %7s |", " ", $1, " "}'
-    elif [[ $VFLAG == "1" ]]
-    then
-      echo -e "${TL[$ii]}" | awk '{ printf "%1s %14s %1s |", " ", $1, " "}'
+      awk -v list=${TL[$ii]} 'BEGIN{ printf "%1s %14s %1s |", " ", list, " "; exit(0)}'
     fi
   done
-  echo -e "total"    | awk '{ printf "%11s\n", $1}'
+  awk -v t="total" 'BEGIN { printf "%11s\n", t; exit(0)}'
 
   #Second line of account header
-  echo -e "$ACCT" | awk '{ printf "%-17s |", $1 }'
+  awk -v acct=$ACCT 'BEGIN { printf "%-25s |", acct; exit(0) }'
   for ii in `seq 0 $((NType-1))`
   do
-    if [[ $VFLAG == "2" ]]
+    if [[ $VFLAG == "1" || $VFLAG == "2" ]]
     then
-      echo -e "core-min core-hrs bill-hrs" | awk '{ printf "%11s %9s %9s |", $1, $2, $3 }'
-    elif [[ $VFLAG == "1" ]]
-    then
-      echo -e "core-hrs bill-hrs" | awk '{ printf "%9s %9s|", $1, $2 }'
+      if [[ ${TL[$ii]} == a100 ]]
+      then 
+        awk -v ch="gpu-hrs"  -v bh="bill-hrs" 'BEGIN { printf "%9s %9s|", ch, bh; exit(0) }'
+      else
+        awk -v ch="core-hrs" -v bh="bill-hrs" 'BEGIN { printf "%9s %9s|", ch, bh; exit(0) }'
+      fi
     fi
   done
-  echo -e "bill-hrs" | awk '{ printf "%12s\n", $1}'
+  #echo -e "bill-hrs" | 
+  awk -v bh="bill-hrs" 'BEGIN { printf "%12s\n", bh; exit(0) }'
 
   #Last line of account header
   printHBar
@@ -142,9 +147,16 @@ function getAccountUsage {
   ACCT=$1
   printAcctHead $ACCT
   # Loop over list of users in the account
-  for UN in `sacctmgr show assoc where account=$ACCT -nP format=user | sort -u`
+  read USERLIST < <(sacctmgr show assoc where cluster=$SYSNAME account=$ACCT -nP format=user | sort -u | tr "\n" " ")
+  read oldUSERLIST < <(grep "Account=$ACCT\ .*tion=\ " $FN | cut -f3 -d" " | cut -f1 -d\( | cut -f2 -d= | grep -v "^$" | sort -u)
+  [[ $DEBUGFLAG ]] && echo $USERLIST vs. $oldUSERLIST
+  for UN in $USERLIST
+  #for UN in `sacctmgr show assoc where account=$ACCT -nP format=user | sort -u`
   do
-    if [[ "0" == "$(sacctmgr show assoc where cluster=$SYSNAME account=$ACCT user=$UN partition='' format=GrpSubmit -nP)" ]]
+    read USERSTATUS2 < <(grep -A5 "Account=$ACCT.*$UN.*ion=\ " $FN | tail -1 | cut -f2 -d= | cut -f1 -d\()
+    #read USERSTATUS < <(sacctmgr show assoc where cluster=$SYSNAME account=$ACCT user=$UN partition='' format=GrpSubmit -nP)
+    #echo "$UN: old , new u-status: $USERSTATUS,$USERSTATUS2"
+    if [[ "0" == "$USERSTATUS2" ]]
     then
       [[ $DEBUGFLAG ]] && echo "getAccountUsage: $UN is not active on account $ACCT, skipping..."
       continue
@@ -159,35 +171,76 @@ function getAccountUserUsage {
   ACCT=$1; UN=$2;
   BTOT=0; CTOT=0 #accumulators for user-account bill/cpu-minutes over all partitions
   BACC=0; CACC=0 #accumulators for normal+dev+preemptable bill/cpu-minutes usage
+  GBAC=0; GACC=0 #accumulators for a100normal+a100dev billing/gpu-minutes usage
 
-  echo -e "$UN" | awk '{ printf "%-18s|", $1 }'
+  awk -v un=$UN 'BEGIN{ printf "%25s |", un; exit(0) }'
+  #Loop over partitions. Arrays listed here for reference
+  #export PL=(normal_q dev_q largemem_q intel_q a100_dev_q a100_normal_q interactive_q preemptable_q)
+  #export NPart=8
+  #export TL=(normal\+dev largemem intel a100 interactive preemptable)
+  #export NType=6
+  #export PL=(normal_q dev_q largemem_q intel_q a100_dev_q a100_normal_q interactive_q preemptable_q)
+  #export NPart=6
+  #export TL=(normal\+dev largemem intel a100)
+  #export NType=4
   for ii in `seq 0 $((NPart-1))`
   do
-    BUSE=0; CUSE=0;
+    BUSE=0; CUSE=0; GUSE=0 
+    # BUSE (billing) set for all partitons types. CUSE (cpu) or GUSE (gpu) set depending on partition type 
     getAccountUserPartitionUsage $ACCT $UN ${PL[$ii]}
     BTOT=$((BTOT+BUSE));  CTOT=$((CTOT+CUSE));
-    if [[ $ii == 0 ]] #first two partitions (normal+dev) print as one
+    case ${PL[$ii]} in
+      "normal_q")
+        BACC=$((BACC+BUSE)); CACC=$((CACC+CUSE)); continue
+        ;;
+      "dev_q")
+        BACC=$((BACC+BUSE)); CACC=$((CACC+CUSE));
+        BUSE=$BACC;  CUSE=$CACC
+        ;;
+      "largemem_q")
+        ;;
+      "intel_q")
+        ;;
+      "a100_dev_q")
+        GBAC=$((GBAC+BUSE)); GACC=$((GACC+GUSE)); continue
+        ;;
+      "a100_normal_q")
+        GBAC=$((GBAC+BUSE)); GACC=$((GACC+GUSE));
+        BUSE=$GBAC;  GUSE=$GACC
+        ;;
+      "interactive_q")
+        ;;
+      "preemptable_q")
+        ;;
+      *)
+        echo "something has gone terribly wrong"
+        exit
+        ;;
+    esac
+    #if [[ ${PL[$ii]} == "normal_q" ]] #first two partitions (normal+dev) print as one
+    #then
+    #  BACC=$((BACC+BUSE)); CACC=$((CACC+CUSE)); continue
+    #elif [[ ${PL[$ii]} == "dev_q" ]]
+    #then
+    #  BACC=$((BACC+BUSE)); CACC=$((CACC+CUSE));
+    #  BUSE=$BACC;  CUSE=$CACC
+    #fi
+    if [[ $VFLAG == "2" || $VFLAG == "1" ]] #print [cpu/gpu] hours and billing hours used when most verbose (-v or -vv) output requested
     then
-      BACC=$((BACC+BUSE)); CACC=$((CACC+CUSE)); continue
-    elif [[ $ii == 1 ]]
-    then
-      BACC=$((BACC+BUSE)); CACC=$((CACC+CUSE));
-      BUSE=$BACC;  CUSE=$CACC
-    fi
-    if [[ $VFLAG == "2" ]] #print cpu-minutes used when most verbose (-vv) output requested
-    then
-      echo -e "$CUSE $((CUSE/60)) $((BUSE/60))" | awk '{ printf "%12s %9s %9s|", $1, $2, $3 }'
-    elif [[ $VFLAG == "1" ]] # verbose output (-v) provides cpu-hours and billing-hours
-    then
-      echo -e "$((CUSE/60)) $((BUSE/60))" | awk '{ printf "%9s %9s|", $1, $2 }'
+      if [[ ${PL[$ii]} == "a100_normal_q" ]]
+      then
+        awk -v guse=$gUSE -v buse=$BUSE 'BEGIN{ printf "%9.0f %9.0f|", guse/60, buse/60; exit(0) }'
+      else
+        awk -v cuse=$CUSE -v buse=$BUSE 'BEGIN{ printf "%9.0f %9.0f|", cuse/60, buse/60; exit(0) }'
+      fi
     fi
   done
-  echo -e "$((BTOT/60))" | awk '{ printf "%12s\n", $1}'
+  awk -v btot=$BTOT 'BEGIN{ printf "%11.0f\n", btot/60; exit(0)}'
 }
 
 function getAccountUserPartitionUsage {
   ACCT=$1; UN=$2; PART=$3;
-  STR=`grep -A 7 "$ACCT\ .*$UN(.*$PART\ " $FN | tail -n 1`
+  read STR < <(grep -A 7 "$ACCT\ .*$UN(.*$PART\ " $FN | tail -n 1)
   if [[ -z "$STR" ]]
   then
     [[ $DEBUGFLAG ]] && echo "No assocation output for $ACCT $UN $PART"
@@ -195,103 +248,128 @@ function getAccountUserPartitionUsage {
     echo -e "" | awk '{ printf ""}'
     continue
   fi
-  BILL=`echo $STR |  cut -d, -f5 | cut -d= -f2 |  tr -d \) | tr \( " "`
-  CPU=`echo  $STR |  cut -d, -f1 | cut -d= -f3 |  tr -d \) | tr \( " "`
-  BLIM=`echo $BILL | cut -d" " -f1`;   BUSE=`echo $BILL | cut -d" " -f2`
-  CLIM=`echo $CPU | cut -d" " -f1`;    CUSE=`echo $CPU | cut -d" " -f2`
+  read BILL < <(echo $STR |  cut -d, -f5 | cut -d= -f2 |  tr -d \) | tr \( " ")
+  read CPU < <(echo  $STR |  cut -d, -f1 | cut -d= -f3 |  tr -d \) | tr \( " ")
+  read BLIM < <(echo $BILL | cut -d" " -f1);  read BUSE < <(echo $BILL | cut -d" " -f2)
+  read CLIM < <(echo $CPU | cut -d" " -f1);  read CUSE < <(echo $CPU | cut -d" " -f2)
 }
 
 function getUserAcctTotal {
+  # This is really only used for the personal account printout
   UN=$1; ACCT=$2;
-  STR=`grep -A 7 "$ACCT\ .*$UN(.*tion\= " $FN | tail -n 1`
-  BILL=`echo $STR |  cut -d, -f5 | cut -d= -f2 |  tr -d \) | tr \( " "`
-  CPU=`echo  $STR |  cut -d, -f1 | cut -d= -f3 |  tr -d \) | tr \( " "`
-  BLIM=`echo $BILL | cut -d" " -f1`;   BUSE=`echo $BILL | cut -d" " -f2`
-  CLIM=`echo $CPU | cut -d" " -f1`;    CUSE=`echo $CPU | cut -d" " -f2`
+  read STR < <(grep -A 7 "$ACCT\ .*$UN(.*tion\= " $FN | tail -n 1)
+  read BILL < <(echo $STR |  cut -d, -f5 | cut -d= -f2 |  tr -d \) | tr \( " ")
+  read CPU < <(echo  $STR |  cut -d, -f1 | cut -d= -f3 |  tr -d \) | tr \( " ")
+  read BLIM < <(echo $BILL | cut -d" " -f1);   read BUSE < <(echo $BILL | cut -d" " -f2)
+  read CLIM < <(echo $CPU | cut -d" " -f1);    read CUSE < <(echo $CPU | cut -d" " -f2)
   if [[ "$BLIM" == "N" ]]
   then
     BLIM="None"
     BPER=0
   else
-    BPER=$( echo "100 * $BUSE / $BLIM" | bc -l )
+    read BPER < <( echo "100 * $BUSE / $BLIM" | bc -l )
   fi
   if [[ $VFLAG == "2" ]]
   then
-    echo -e "$ACCT" | awk '{ printf "Total Account Usage/Limit:     %156s", $1 }'
+    awk -v acct=$ACCT 'BEGIN { printf "Total Account Usage/Limit: owner = n/a  %108s", acct, ""; exit(0) }'
   elif [[ $VFLAG == "1" ]]
   then
-    echo -e "$ACCT" | awk '{ printf "Total Account Usage/Limit:     %51s", $1 }'
+    awk -v acct=$ACCT 'BEGIN { printf "Total Account Usage/Limit: owner = n/a  %68s", acct; exit(0) }'
   else
-    echo -e "$ACCT" | awk '{ printf "Total Account Usage/Limit:     %16s", $1 }'
+    awk -v acct=$ACCT 'BEGIN { printf "Total Account Usage/Limit: owner = n/a  %43s", acct; exit(0) }'
   fi
-  echo -e "$((BUSE/60)) $((BLIM/60)) $( echo "100 * $BUSE / $BLIM" | bc -l )" | awk '{ printf "%9s / %-10s = %2.2f\%\n", $1, $2, $3 }' 2>/dev/null
+  awk -v buse=$BUSE -v blim=$BLIM 'BEGIN { printf "%10.0f / %-9.0f = %2.2f%\n", buse/60, blim/60, 100*buse/blim; exit(0) }' 
+  unset OWNER
 }
 
 function getAccountTotals {
   ACCT=$1
-  STR=`grep -A 7 "$ACCT\ .*UserName=\ .*tion=\ " $FN | tail -n 1`
+  read STR < <(grep -A 7 "$ACCT\ .*UserName=\ .*tion=\ " $FN | tail -n 1)
   if [[ -z "$STR" ]]
   then
-    echo "No assocation output for $ACCT with blank Username and blank Partition"
+    [[ $DEBUGFLAG ]] && echo "No assocation output for $ACCT with blank Username and blank Partition"
     continue
   fi
-  PATTERN="    GrpTRESMins=cpu"
+  PATTERN="GrpTRESMins=cpu"
   if [[ "$STR" != $PATTERN* ]]
   then
     echo "Unexpected output for $ACCT: $STR"
     continue
   fi
-  BILL=`echo $STR |  cut -d, -f5 | cut -d= -f2 |  tr -d \) | tr \( " "`
-  BLIM=`echo $BILL | cut -d" " -f1`
-  BUSE=`echo $BILL | cut -d" " -f2`
+  read BILL < <(echo $STR |  cut -d, -f5 | cut -d= -f2 |  tr -d \) | tr \( " ")
+  read BLIM < <(echo $BILL | cut -d" " -f1)
+  read BUSE < <(echo $BILL | cut -d" " -f2)
 
-  echo "" | awk '{printf "Total Account Usage/Limit:"}'
+  read OWNER < <( scontrol show assoc account=$ACCT flags=assoc | grep -A3 "Account=$ACCT\ UserName=\ Partition=\ "\
+                   | tail -n1 | cut -d\= -f2 | cut -d\( -f1 )
+
+  awk -v owner=$OWNER 'BEGIN {printf "Total Account Usage/Limit: owner = %-18s", owner; exit(0) }'
   if [[ $VFLAG == "2" ]]
   then
-    echo -e "" | awk '{printf "%145s", $1}'
+    awk 'BEGIN {printf "%70s", ""}'
   elif [[ $VFLAG == "1" ]]
   then
-    echo -e "" | awk '{printf "%40s", $1}'
+    awk 'BEGIN {printf "%30s", ""}'
   else
-    echo -e "" | awk '{printf "%5s", $1}'
+    awk 'BEGIN {printf "%5s", ""}'
   fi
   if [[ $BLIM -eq "N" ]]; then 
-    echo -e "$ACCT $((BUSE/60)) unlimited 0" | awk '{ printf "%16s %8s / %-10s = %2.2f\%\n", $1, $2, $3, $4 }' 2>/dev/null
+    awk -v acct=$ACCT -v buse=$BUSE -v u="unlimited" -v n=0 \
+      'BEGIN { printf "%25s %9.0f / %-9s = %2.2f%\n", acct, buse/60, u, n; exit(0) }' 
   else
-    echo -e "$ACCT $((BUSE/60)) $((BLIM/60)) $( echo "100 * $BUSE / $BLIM" | bc -l )" | awk '{ printf "%16s %8s / %-10s = %2.2f\%\n", $1, $2, $3, $4 }' 2>/dev/null
+    awk -v acct=$ACCT -v buse=$BUSE -v blim=$BLIM \
+      'BEGIN { printf "%25s %9.0f / %-9.0f = %2.2f%\n", acct, buse/60, blim/60, 100*buse/blim; exit(0) }' 
   fi
 }
 
 function printHBar {
   #Separator before account summary
-  echo -e "" | awk '{ printf "-----------------" }'
+  #echo -e "" | awk '{ printf "-----------------" }'
+  awk 'BEGIN { printf "-----------------" }'
   for ii in `seq 0 $((NType-1))`
   do
-  if [[ $VFLAG == "2" ]]
+  if [[ $VFLAG == "2" || $VFLAG == "1" ]]
   then
-    echo -e "" | awk '{ printf "-----------------------------------" }'
-  else
-    echo -e "" | awk '{ printf "------------------------" }'
+    awk 'BEGIN { printf "------------------------" }'
   fi
   done
-  echo -e "" | awk '{ printf "----------------------\n" }'
+  awk 'BEGIN { printf "----------------------\n" }'
 }
 
 function validateAccount {
-  if [[ -z $(sacctmgr show account $ACCT) ]]
+  read SSA3 < <(scontrol show assoc account=$ACCT flags=assoc | head -n 3 | tail -n 1)
+  if [[ "No associations currently cached in Slurm." == $SSA3 ]]
   then
-    [[ $DEBUGFLAG ]] &&  echo "account not found in slurm database $ACCT, skipping..."
+    [[ $DEBUGFLAG ]] &&  echo "Account $ACCT not found in slurm database cache, skipping..."
     continue
-  elif [[ "0" == $( sacctmgr show assoc where cluster=$SYSNAME account=$ACCT user="" partition="" format=GrpSubmit -nP ) ]]
+  fi
+
+  # Account exists. Get ctld cache info and append to file.
+  scontrol show assoc account=$ACCT flags=assoc >> $FN  
+
+  read acctStatus < <(grep -A5 "Account=$ACCT UserName= " $FN | tail -1 | cut -f2 -d= | cut -f1 -d\()
+  if [[ "0" == $acctStatus ]]
   then
     [[ $DEBUGFLAG ]] &&  echo "account $ACCT is not active according to the Slurm database, skipping..."
     continue
-  elif [[ "0" == $( sacctmgr show assoc where cluster=$SYSNAME account=$ACCT user=$INPUTUSER partition="" format=GrpSubmit -nP ) ]]
+  fi
+
+  read acctUserStatus < <( grep -A5 "Account=$ACCT.*$INPUTUSER.*ion= " $FN | tail -1 | cut -f2 -d= | cut -f1 -d\( )
+  [[ $DEBUGFLAG ]] && echo "accountUserStatus=$acctUserStatus"
+  if [[ -z $AFLAG && "0" == $acctUserStatus ]]
   then
     [[ $DEBUGFLAG ]] && echo "user $INPUTUSER is not an active user of account $ACCT according to Slurm database, skipping..."
     continue
   fi
+
+  # Ideally: "[[ $ACCT == `id -un $ACCT` ]] && continue", but may need some db cleanup first
+  if [[ "$ACCT" == "$INPUTUSER" ]]
+  then
+    [[ $DEBUGFLAG ]] && echo "account=uid ==> it is only a parent account in Slurm database, skipping..."
+    continue
+  fi
 }
+
 
 # Main function begins here
 # requires:
@@ -311,23 +389,24 @@ date > $FN
 
 if [[ $VFLAG == "2" ]]
 then
-  export PL=(normal_q dev_q largemem_q intel_q interactive_q preemptable_q)
-  export NPart=6
-  export TL=(normal\+dev largemem intel interactive preemptable)
-  export NType=5
+  export PL=(normal_q dev_q largemem_q intel_q a100_dev_q a100_normal_q interactive_q preemptable_q)
+  export NPart=8
+  export TL=(normal\+dev largemem intel a100 interactive preemptable)
+  export NType=6
 elif [[ $VFLAG == "1" ]]
 then
-  export PL=(normal_q dev_q largemem_q intel_q interactive_q preemptable_q)
-  export NPart=4
-  export TL=(normal\+dev largemem intel)
-  export NType=3
+  export PL=(normal_q dev_q largemem_q intel_q a100_dev_q a100_normal_q interactive_q preemptable_q)
+  export NPart=6
+  export TL=(normal\+dev largemem intel a100)
+  export NType=4
 else
   echo
 fi
 
 if [[ -z $INPUTACCTLIST ]]
 then
-  ACCTLIST=$(sacctmgr show assoc where user=$INPUTUSER -n format=account -P | sort -u | tr "\n" " ")
+  scontrol show assoc user=$INPUTUSER flag=assoc >> $FN
+  read ACCTLIST < <( grep -o " Account=.*$INPUTUSER.*tion=\ " $FN | tr = " " | cut -f3 -d" " | sort -u | tr "\n" " " )
   [[ $DEBUGFLAG ]] && echo "Found accounts $ACCTLIST for user $INPUTUSER"
 else
   ACCTLIST=$(echo $INPUTACCTLIST | tr , " ")
@@ -337,12 +416,11 @@ fi
   do
     validateAccount
     #/usr/bin/time -f %E scontrol show assoc account=$ACCT flags=assoc >> $FN
-    scontrol show assoc account=$ACCT flags=assoc >> $FN
-    if [[ "$ACCT" == "tcfriendly" ]]
-    then
-      [[ $DEBUGFLAG ]] && echo "skipping tcfriendly account"
-      continue
-    elif [[ "$ACCT" = "personal" ]]
+    #if [[ "$ACCT" == "tcfriendly" ]]
+    #then
+    #  [[ $DEBUGFLAG ]] && echo "skipping tcfriendly account"
+    #  continue
+    if [[ "$ACCT" = "personal" ]]
     then
       if [[ $VFLAG == "1" ]] || [[ $VFLAG == "2" ]]
       then
