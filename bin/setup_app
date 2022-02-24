@@ -5,7 +5,7 @@
 #usage info
 function printUsage {
   echo "setup_app: Setup directory/modulefile for custom software installation"
-  echo "Usage: script.sh package version"
+  echo "Usage: setup_app package version"
   echo 
   echo "Options:"
   #echo "  --user                   Set up for personal (home directory) installation"
