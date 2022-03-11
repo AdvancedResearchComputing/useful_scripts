@@ -52,13 +52,13 @@ print_gpfs_quota() {
 	print_gpfs_groups_quota "$user"
 }
 
-print_beegfs_quota() {
+print_ess_gpfs_quota() {
 	local user=$1
 	local beegfs_cache="/home/$user/$CACHE_DIR/beegfs";
 	if [ -s "$beegfs_cache" ]; then
 		echo
-		printf "$(print_padding HEADER_COLORS[@] 'header')" \
-			"" "BEEGFS" "" "" "" "" ""
+		#printf "$(print_padding HEADER_COLORS[@] 'header')" \
+		#	"" "BEEGFS" "" "" "" "" ""
 
 		json=$(cat "$beegfs_cache");
 		while read line; do
@@ -69,8 +69,8 @@ print_beegfs_quota() {
 			local size_bytes=$(echo $line | awk -F\| '{print $3}');
 			local limit_bytes=$(echo $line | awk -F\| '{print $2}');
 
-			local size_GiB=$(bytes_to_GiB "$size_bytes")
-			local limit_GiB=$(bytes_to_GiB "$limit_bytes")
+			local size_GiB=$(KiB_to_GiB "$size_bytes")
+			local limit_GiB=$(KiB_to_GiB "$limit_bytes")
 
 			local row=("$user" "$path" "$size_GiB" "$limit_GiB" "" "")
 			print_row row[@] colors[@];
@@ -349,7 +349,7 @@ main() {
 		print_home_quota "$user"
 
 		print_gpfs_quota "$user"
-		print_beegfs_quota  "$user"
+		print_ess_gpfs_quota  "$user"
 
 		print_alloc_quotas "$user"
 	done
