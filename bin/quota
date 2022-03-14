@@ -69,8 +69,8 @@ print_ess_gpfs_quota() {
 			local size_bytes=$(echo $line | awk -F\| '{print $3}');
 			local limit_bytes=$(echo $line | awk -F\| '{print $2}');
 
-			local size_GiB=$(KiB_to_GiB "$size_bytes")
-			local limit_GiB=$(KiB_to_GiB "$limit_bytes")
+			local size_GiB=$(KiB_to_GB "$size_bytes")
+			local limit_GiB=$(KiB_to_GB "$limit_bytes")
 
 			local row=("$user" "$path" "$size_GiB" "$limit_GiB" "" "")
 			print_row row[@] colors[@];
@@ -104,8 +104,8 @@ print_home_quota() {
 	local usabe_bytes=$(echo "$json" | grep -o 'capacity_usage": "[0-9]\+"' | grep -o "[0-9]\+")
 	local limit_bytes=$(echo "$json" | grep -o 'limit": "[0-9]\+"' | grep -o "[0-9]\+")
 
-	local usage_GiB=$(bytes_to_GiB "$usabe_bytes")
-	local limit_GiB=$(bytes_to_GiB "$limit_bytes")
+	local usage_GiB=$(bytes_to_GB "$usabe_bytes")
+	local limit_GiB=$(bytes_to_GB "$limit_bytes")
 
 	local colors=('' '' '' '' '' '' '')
 	local row=("$user" "/home" "$usage_GiB" "$limit_GiB" "-" "-")
@@ -228,8 +228,8 @@ parse_quota() {
 	local current_blocksize_KiB=$(echo -e "$stats" | awk '{print $'$current_blocksize_col'}')
 	local maximum_blocksize_KiB=$(echo -e "$stats" | awk '{print $'$maximum_blocksize_col'}')
 
-	local current_blocksize_GiB=$(KiB_to_GiB "$current_blocksize_KiB")
-	local maximum_blocksize_GiB=$(KiB_to_GiB "$maximum_blocksize_KiB")
+	local current_blocksize_GiB=$(KiB_to_GB "$current_blocksize_KiB")
+	local maximum_blocksize_GiB=$(KiB_to_GB "$maximum_blocksize_KiB")
 
 	local current_files=$(echo "$stats" |  awk -F\| '{print $2}' | awk '{print $'$current_files_col'}')
 	local maximum_files=$(echo "$stats" |  awk -F\| '{print $2}' | awk '{print $'$maximum_files_col'}')
@@ -267,7 +267,7 @@ print_gpfs_groups_quota() {
 
 print_storage_header() {
 	printf "$(print_padding HEADER_COLORS[@] 'header')" \
-		"USER" "FILESYS/SET" "DATA (GiB)" "QUOTA (GiB)" "FILES" "QUOTA" "NOTE"
+		"USER" "FILESYS/SET" "DATA (GB)" "QUOTA (GB)" "FILES" "QUOTA" "NOTE"
 }
 
 print_alloc_header() {
@@ -302,6 +302,12 @@ print_padding() {
 		done
 	fi
 	echo "\n";
+}
+
+KiB_to_GB() {
+	local size_in_KiB="$1"
+	local KiB_in_GB=976563;
+	printf '%.0f' $(echo "$size_in_KiB / $KiB_in_GB" | bc -l)
 }
 
 KiB_to_GiB() {
