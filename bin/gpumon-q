@@ -1,0 +1,2 @@
+#!/bin/bash
+nvidia-smi --query-gpu=timestamp,name,pci.bus_id,driver_version,temperature.gpu,utilization.gpu,utilization.memory --format=csv -l 5 | grep -v " 0 %, 0 %"
