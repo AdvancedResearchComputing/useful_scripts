@@ -64,22 +64,28 @@ print_ess_gpfs_quota() {
 
 			local path=$(echo $line | awk -F\| '{print $1}');
 
-			local size_bytes=$(echo $line | awk -F\| '{print $3}');
-			local limit_bytes=$(echo $line | awk -F\| '{print $2}');
+			local block_usage_kib=$(echo $line | awk -F\| '{print $2}');
+			local block_quota_kib=$(echo $line | awk -F\| '{print $3}');
 
-			local size_GiB=$(KiB_to_GB "$size_bytes")
-			local limit_GiB=$(KiB_to_GB "$limit_bytes")
+			local block_usage_gib=$(KiB_to_GB "$block_usage_kib")
+			local block_quota_gib=$(KiB_to_GB "$block_quota_kib")
 
-			local row=("$user" "$path" "$size_GiB" "$limit_GiB" "" "")
+			local files_usage=$(echo $line | awk -F\| '{print $4}');
+			local files_quota=$(echo $line | awk -F\| '{print $5}');
+
+			local row=("$user" "$path" "$block_usage_gib" "$block_quota_gib"
+								 "$files_usage" "$files_quota")
 			print_row row[@] colors[@];
 
 
-		done < <(cat "$projects_cache" | python <( echo '
-from __future__ import print_function;
+		done < <(cat "$projects_cache" | python3 <( echo '
 import sys, json;
 for (k, v) in json.load(sys.stdin).items(): 
-	print(k+"|" + v["limit_bytes"] + "|" + v["size_bytes"])
-	pass
+	block_usage = v["blockUsage"]
+	block_quota = v["blockQuota"]
+	files_usage = v["filesUsage"]
+	files_quota = v["filesQuota"]
+	print(f"{k}|{block_usage}|{block_quota}|{files_usage}|{files_quota}")
 '))
 
 	fi
