@@ -1,0 +1,6 @@
+# accept username as first input argument. If no input, then use current user.
+${_user_}=`id -u $1`
+
+# validate that we have a valid uid to work with, but supress all output
+id -un ${_user_} >/dev/null 2>&1
+[[ $? ]] && systemd-cgtop user.slice/user-`id -u`.slice || echo "unable to process username - quitting" 
