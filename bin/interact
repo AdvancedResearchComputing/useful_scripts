@@ -11,6 +11,11 @@
 # simpler checks below with weird options, e.g., by naming their job "hi
 # --account" but they should cover the vast majority of cases.
 
+# Define color
+RED='\033[0;31m'
+YELLOW='\033[0;33m'
+NC='\033[0m' # No Color
+
 #user-provided arguments
 original_args="$@"
 #we'll add these
@@ -22,19 +27,17 @@ case "${SYSNAME}" in
         def_partition="interactive_q"
         def_gres=""
         ;;
-    infer)
-        def_partition="t4_dev_q"
-        def_gres="gpu:1"
-        ;;
-    huckleberry)
-        def_partition="normal_q"
-        def_gres="gpu:1"
-        ;;
-    cascades)
-        def_partition="dev_q"
+    owl)
+        def_partition="interactive_q"
         def_gres=""
-        #special gres if job mentions v100 or k80 partitions
-        echo "$original_args" | grep -q "v100_\w\+_q$\|k80_q$" && def_gres="gpu:1"
+        ;;
+    falcon)
+        def_partition="l40s_dev_q,a30_dev_q"
+        def_gres="gpu:1"
+        ;;
+    infer)
+        def_partition="t4_dev_q,v100_dev_q"
+        def_gres="gpu:1"
         ;;
     *)
         def_partition="dev_q"
@@ -43,14 +46,14 @@ case "${SYSNAME}" in
 esac
 
 # Print help if requested or if no argument is provided
-if [[ " $original_args" == *" --help"* || $# -eq 0 ]]; then 
+if [[ " $original_args" == *" --help"* || $# -eq 0 ]]; then
   echo "Request an interactive job"
   echo "Usage: interact [OPTIONS]"
   echo "where OPTIONS are any valid Slurm (sbatch/salloc/srun) options, or:"
   echo "  --verbose     Print the Slurm command being run before starting job (for debugging purposes)"
   echo "  --help        Print this message"
   echo
-  echo "To run, an account should be provided with -A [account] or --account=[account]. See showusage for a list of valid accounts."
+  echo "To run, an account should be provided with -A [account] or --account=[account]. See 'quota' for a list of valid accounts and utilization metrics."
   exit
 fi
 
@@ -58,42 +61,32 @@ fi
 [[ " $original_args" == *" --verbose"* ]] && verbose=1 || verbose=0
 
 # If account not specified by user
-if [[ ! " $original_args" == *" -A"* && ! " $original_args" == *" --account"* ]]; then 
-  #The following appears to work to get a default account (including on TinkerCliffs)
-  #However, we have disabled it for the time being so that users have to explicitly request paid accounts
-  ## Get default account for user from Slurm
-  #account=`scontrol show assoc users=$USER flags=users | grep -E -o "DefAccount=\S*" | tr = " " | awk '{print $2}'`
-  ## Detect account = "(null)"
-  #if [[ "$account" = "(null)" ]]; then
-  #  echo "Could not find a default account/allocation for $USER. Quitting."
-  #  exit 1
-  #fi
-  #echo "Using $account, the default allocation/account for $USER."
-  #extra_args="--account=$account $extra_args"
-
-  #Instead, just error out
-  echo "An account must be specified with -A or --account. A list of valid accounts (and remaining balances) can be found with showusage."
+if [[ ! " $original_args" == *" -A"* && ! " $original_args" == *" --account"* ]]; then
+  echo "An account must be specified with -A or --account. A list of valid accounts (and remaining balances) can be found with the command 'quota'."
   exit 1
 fi
 
 # If partition not specified by user
-if [[ ! " $original_args" == *" -p"* && ! " $original_args" == *" --partition"* ]]; then 
-  echo " --- No partition specified: setting --partition=$def_partition"
+if [[ ! " $original_args" == *" -p"* && ! " $original_args" == *" --partition"* ]]; then
+  echo -e "${YELLOW} --- No partition specified:${NC} setting --partition=$def_partition"
   extra_args="--partition=$def_partition $extra_args"
 fi
 
 # If gres not specified by user (and def_gres not empty)
-if [[ ! " $original_args" == *" --gres"* && ! -z $def_gres ]]; then 
-  echo " --- No gres specified: setting --gres=$def_gres"
+if [[ ! " $original_args" == *" --gres"* && ! -z $def_gres ]]; then
+  echo -e "${YELLOW} --- No gres specified:${NC} setting --gres=$def_gres"
   extra_args="--gres=$def_gres $extra_args"
 fi
-
 
 #Command to be run
 # Later arguments appear to be given priority so add user-provided
 # arguments second on the off chance of conflicts
 cmd="srun $extra_args $original_args --pty $SHELL"
 #Print the command being run if user requested verbose mode
-[[ $verbose -gt 0 ]] && echo "Running: $cmd" 
+[[ $verbose -gt 0 ]] && echo "Running: $cmd"
+
+# Print the warning message in red
+echo -e "${RED} --- Warning:${NC} Your interactive session will consume resources - CPU cores, memory, and GPUs (on GPU nodes) while it remains open. Please close your session whenever you finish your work. Other users cannot use the resources allocated to your job until you close your session. Consider the use of batch jobs to optimize the resources allocation."
+
 #Run
 $cmd
