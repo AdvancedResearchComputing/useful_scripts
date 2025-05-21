@@ -1,1 +1,2 @@
-sacctmgr show qos format=name%25,Priority,MaxWall,MaxTRESPerUser%35,MaxTRESPerAccount%35
+sacctmgr show qos format=name%25,Priority,MaxWall,MaxTRESPerUser%35,MaxTRESPerAccount%35,UsageFactor | \
+sed '1,2b; s/.\{8\}$//'
