@@ -1,2 +1,0 @@
-#!/bin/bash
-sacctmgr show assoc where account=$1 format=parentname -np cluster=tinkercliffs | grep -v "^|" | tr -d "|"

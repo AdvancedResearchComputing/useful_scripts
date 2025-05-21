@@ -1,0 +1,2 @@
+#!/bin/bash
+/lib64/ld-linux-x86-64.so.2 /apps/common/software/ABAQUS/2024/cae/linux_a64/code/bin/lmstat $@

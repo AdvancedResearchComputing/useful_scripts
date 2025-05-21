@@ -1,0 +1,8 @@
+#!/bin/bash
+
+if [ -z "$1" ]; then
+  echo "Usage: tcgetparent <account>"
+  exit 1
+fi
+
+sacctmgr show assoc where account=$1 format=parentname -np cluster=tinkercliffs | grep -v "^|" | tr -d "|"

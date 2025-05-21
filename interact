@@ -1,47 +1,33 @@
 #!/bin/bash -l
 # Script to start interactive job on ARC systems
-# Only for clusters managed by Slurm
-
-#NOTE: The bash -l above is to fix PS1 for users who don't source /etc/bashrc in their ~/.bashrc
-#It may not be the ideal solution
-
-#NOTE (jkrometi, 2/2/2021):
-# Argument parsing with getopts has been removed because it's not really designed
-# to pass through unknown arguments (in this case to srun). Users could break the
-# simpler checks below with weird options, e.g., by naming their job "hi
-# --account" but they should cover the vast majority of cases.
 
 # Define color
 RED='\033[0;31m'
 YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
-#user-provided arguments
+# User-provided arguments
 original_args="$@"
-#we'll add these
+# We'll add these
 extra_args="--job-name='INTERACT'"
 
-#system-specific defaults
+# System-specific defaults
 case "${SYSNAME}" in
     tinkercliffs)
-        def_partition="interactive_q"
+        def_partition="normal_q"
         def_gres=""
         ;;
     owl)
-        def_partition="interactive_q"
+        def_partition="normal_q"
         def_gres=""
         ;;
     falcon)
-        def_partition="l40s_dev_q,a30_dev_q"
-        def_gres="gpu:1"
-        ;;
-    infer)
-        def_partition="t4_dev_q,v100_dev_q"
+        def_partition="v100_normal_q,t4_normal_q"
         def_gres="gpu:1"
         ;;
     *)
-        def_partition="dev_q"
-        def_gres=""
+        echo "SYSNAME '${SYSNAME}' not recognized. Exiting."
+        exit 1
         ;;
 esac
 
@@ -62,7 +48,7 @@ fi
 
 # If account not specified by user
 if [[ ! " $original_args" == *" -A"* && ! " $original_args" == *" --account"* ]]; then
-  echo "An account must be specified with -A or --account. A list of valid accounts (and remaining balances) can be found with the command 'quota'."
+  echo "An account must be specified with -A or --account. A list of valid allocation accounts (and remaining balances) can be found with the command 'quota'."
   exit 1
 fi
 
@@ -78,15 +64,15 @@ if [[ ! " $original_args" == *" --gres"* && ! -z $def_gres ]]; then
   extra_args="--gres=$def_gres $extra_args"
 fi
 
-#Command to be run
+# Command to be run
 # Later arguments appear to be given priority so add user-provided
 # arguments second on the off chance of conflicts
 cmd="srun $extra_args $original_args --pty $SHELL"
-#Print the command being run if user requested verbose mode
+# Print the command being run if user requested verbose mode
 [[ $verbose -gt 0 ]] && echo "Running: $cmd"
 
 # Print the warning message in red
 echo -e "${RED} --- Warning:${NC} Your interactive session will consume resources - CPU cores, memory, and GPUs (on GPU nodes) while it remains open. Please close your session whenever you finish your work. Other users cannot use the resources allocated to your job until you close your session. Consider the use of batch jobs to optimize the resources allocation."
 
-#Run
+# Run
 $cmd

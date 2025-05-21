@@ -1,1 +1,0 @@
-sacctmgr show qos format=Priority%5,Name%20,Flags%12,MaxJobsPA,MaxJobsPU,MaxSubmitJobsPerAccount,MaxSubmitJobsPerUser,MaxTRESPA%40,MaxTRESPU%40,MaxWall

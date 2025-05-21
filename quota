@@ -87,6 +87,7 @@ for (k, v) in json.load(sys.stdin).items():
 	files_quota = v["filesQuota"]
 	print(f"{k}|{block_usage}|{block_quota}|{files_usage}|{files_quota}")
 '))
+
 	fi
 }
 

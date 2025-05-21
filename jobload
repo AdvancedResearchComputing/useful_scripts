@@ -5,7 +5,6 @@ if [ $# -eq 0 ]
     echo "A job id must be provided"
 else
   jobid=$1
-#  echo "Job is $jobid"
   jobinfo=$( squeue -o "%.10i %.15P %.12j %.12a %.10u %.8T %.12M %.12l %.6D %R" --all -j $jobid )
 
   if [ $(echo "$jobinfo" | wc -l) -eq 1 ]
@@ -17,7 +16,6 @@ else
     jobstate=$( echo "$jobinfo" | grep "^ *$jobid" | awk '{print $6}' | head -1 )
     if [[ $jobstate = RUNNING ]]
     then
-      #NDS=$( scontrol show hostnames "$( sacct -j $jobid -X -o nodelist -n )" )
       NDS=$( scontrol show hostnames "$( squeue -o %R -h -j $jobid )" )
       printf "\nJob is running on nodes: %s\n\n" "$( echo $NDS | paste -s -d " " - )"
 

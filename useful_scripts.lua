@@ -13,5 +13,5 @@ More information
 whatis([==[Description: Useful scripts for ARC users]==])
 whatis([==[URL: https://github.com/AdvancedResearchComputing/useful_scripts]==])
 
-prepend_path("PATH", "/apps/useful_scripts/bin")
+prepend_path("PATH", "/apps/common/useful_scripts/")
 

@@ -1,4 +1,9 @@
 #!/bin/bash
+if [ -z "$1" ]; then
+  echo "Usage: tcgetusage <account>"
+  exit 1
+fi
+
 tcgu_ACCT=$1
 
 CHK=`sshare -a -A $tcgu_ACCT -u='' --long --format=account,grptresmins -nP`
@@ -9,7 +14,7 @@ if [[ "$tcgu_PACCT" == "root" ]]; then
   # print parent account info with header
   tcgetusage_single $tcgu_ACCT
   uPID=$tcgu_ACCT
-  tcgu_CHILDREN=`sshare -a -u="" -o account cluster=tinkercliffs -nP | grep -A 20 $uPID | sed -n "/$uPID/,/^.[a-z,0-9]/p" | grep -v -e "^.[a-z]"`
+  tcgu_CHILDREN=`sshare -a -u="" -o account -nP | grep -A 20 $uPID | sed -n "/$uPID/,/^.[a-z,0-9]/p" | grep -v -e "^.[a-z]"`
   # loop over child accounts and print their account info with no header
   for tcgu_child in $tcgu_CHILDREN; do
     tcgetusage_single $tcgu_child "quiet"

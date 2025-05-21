@@ -1,0 +1,2 @@
+#!/bin/bash
+nvidia-smi --query-gpu=timestamp,name,pci.bus_id,temperature.gpu,utilization.gpu,utilization.memory,memory.used --format=csv -lms 1000

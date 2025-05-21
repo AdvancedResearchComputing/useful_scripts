@@ -10,26 +10,23 @@ function printUsage {
   echo "Options:"
   #echo "  --user                   Set up for personal (home directory) installation"
   echo "  --base dir,--base=dir    Specify other directory for installation"
-  echo "  --system                 System-wide install in /apps (arc personnel only, overridden by --base)"
   echo "  --help,-h                Print this usage message"
   echo
   echo "Examples:"
   echo "  setup_app R 4.0.2-foss-2020b                             #home directory install"
   echo "  setup_app --base=/projects/myproject R 4.0.2-foss-2020b  #install to /projects/myproject"
-  echo "  setup_app --system R 4.0.2-foss-2020b                    #system-wide install (arc personnel only)"
 }
 
 #e.g., tinkercliffs-rome
 sysdir=$( basename $EASYBUILD_INSTALLPATH_MODULES )
 
-#defaults for system-wide installations
+#defaults for home-based installations
 appbase="$HOME/apps/${sysdir}"
 modbase="$HOME/easybuild/modules/${sysdir}/all"
 
 #parse input options
 app=""
 ver=""
-system_flag=""
 base=""
 while [[ $# -gt 0 ]]; do
   key="$1"
@@ -44,10 +41,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --user)
       echo "Ignoring deprecated option --user (home directory install is now the default)..."
-      shift
-      ;;
-    --system)
-      system_flag=1
       shift
       ;;
     --base)
@@ -70,12 +63,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-      
-#if they specified --system, set the directories      
-if [[ ! -z $system_flag ]]; then
-  appbase="/apps/packages/${sysdir}"
-  modbase="/apps/modulefiles/${sysdir}"
-fi
 
 #if they specified --base, set the directories      
 if [[ ! -z $base ]]; then
@@ -144,7 +131,7 @@ prepend_path("INCLUDE", "$appdir/include")
 prepend_path("LD_LIBRARY_PATH", "$appdir/lib")
 prepend_path("LD_LIBRARY_PATH", "$appdir/lib64")
  
-load("foss/2020b")
+load("foss/2024a")
 EOF
 
 #try to guess a variable name ("ju l-i/a" -> "JULIA")
@@ -154,9 +141,7 @@ sed -i "s/SOFTWARE/$varnm/g" $modfl
 
     echo "Done. To finish your build:"
     echo " 1. Install your app in $appdir/"
-    if [[ ! -z $system_flag ]]; then
-      echo "    - Document the installation so we know how you did it"
-    fi
+    echo "    - Document the installation so we know how you did it"
     echo " 2. Edit the modulefile in $modfl"
     echo "    - Set or remove modules to load in the load() line"
     echo "    - Edit description and URL"

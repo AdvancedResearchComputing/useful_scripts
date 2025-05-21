@@ -1,0 +1,25 @@
+#!/bin/bash
+ACCT=$1
+#QUERY_URL="https://slems.arc.vt.edu:443/scalemgmt/v2/filesystems/fs1/quotas?filter=objectName%3D$ACCT"
+#QUERY_RESP=`curl -X GET --header 'Accept: application/json' --header 'Authorization: Basic cXVvdGF2aWV3OmY4bVNCWEtqeEdBeHZldVZnNjJq' $QUERY_URL 2>/dev/null`
+QUERY_RESP=`curl -k -d "fileset=$ACCT" -X POST 'https://coldfront.arc.vt.edu/rest/essquota' 2>/dev/null`
+read bgrc < <(  echo $QUERY_RESP | grep -oP blockGrace.*?, | cut -f2 -d: | tr -d , )
+read blim < <(  echo $QUERY_RESP | grep -oP blockLimit.*?, | cut -f2 -d: | tr -d , )
+read bquo < <(  echo $QUERY_RESP | grep -oP blockQuota.*?, | cut -f2 -d: | tr -d , )
+read busa < <(  echo $QUERY_RESP | grep -oP blockUsage.*?, | cut -f2 -d: | tr -d , )
+read flim < <(  echo $QUERY_RESP | grep -oP filesLimit.*?, | cut -f2 -d: | tr -d , )
+read fquo < <(  echo $QUERY_RESP | grep -oP filesQuota.*?, | cut -f2 -d: | tr -d , )
+read fusa < <(  echo $QUERY_RESP | grep -oP filesUsage.*?, | cut -f2 -d: | tr -d , )
+
+awk -v blim=$blim -v busa=$busa -v base=1000 -v flim=$flim -v fusa=$fusa \
+    'BEGIN{ 
+      printf "%-20s %7s %9s %10s\n","Quota","Usage","Limit","Percent";
+      printf "%-20s %7.1f %9.1f %9.1f%\n","Size(GB)",busa/(base*base),blim/(base*base),busa/blim*100; 
+      printf "%-20s %7.1f %9.1f %9.1f%\n","#Files(1000s)",fusa/(1000),flim/(1000),fusa/flim*100; 
+      exit(0);
+    }' 
+
+
+unset ACCT
+unset QUERY_URL
+unset QUERY_RESP

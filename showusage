@@ -6,7 +6,7 @@ unset AFLAG;
 
 function printUsage {
   echo "Usage: showusage [OPTION]"
-  echo "Lists Tinkercliffs usage information about a user or bank account (current user is the default)"
+  echo "Lists usage information about a user or bank account (current user is the default)"
   echo
   echo "Add -v or -vv for more verbose output"
   echo "Add --debug for additional, admin-oriented information about what the command is doing"
@@ -60,10 +60,14 @@ do
     -v)
       VFLAG=1
       shift
+      echo "Reimplementation needed. Contact ARC staff."
+      exit
       ;;
     -vv)
       VFLAG=2
       shift
+      echo "Reimplementation needed. Contact ARC staff."
+      exit
       ;;
     -u)
       if [[ -z $2 ]]
@@ -245,7 +249,7 @@ function getAccountUserPartitionUsage {
     [[ $DEBUGFLAG ]] && echo "No assocation output for $ACCT $UN $PART"
     FLAG="NoPartData"
     echo -e "" | awk '{ printf ""}'
-    continue
+    return 1
   fi
   read BILL < <(echo $STR |  cut -d, -f5 | cut -d= -f2 |  tr -d \) | tr \( " ")
   read CPU < <(echo  $STR |  cut -d, -f1 | cut -d= -f3 |  tr -d \) | tr \( " ")
@@ -315,6 +319,7 @@ function getAccountTotals {
   if [[ $BLIM -eq "N" ]]; then 
     awk -v acct=$ACCT -v buse=$BUSE -v u="unlimited" -v n=0 \
       'BEGIN { printf "%25s %9.0f / %-9s = %2.2f%\n", acct, buse/60, u, n; exit(0) }' 
+    [[ $DEBUGFLAG ]] && echo "Found billing limit BLIM=$BLIM. This is unusual for regular accounts and causes \"unlimited\" output above."
   else
     awk -v acct=$ACCT -v buse=$BUSE -v blim=$BLIM \
       'BEGIN { printf "%25s %9.0f / %-9.0f = %2.2f%\n", acct, buse/60, blim/60, 100*buse/blim; exit(0) }' 
