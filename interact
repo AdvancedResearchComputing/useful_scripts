@@ -72,7 +72,11 @@ cmd="srun $extra_args $original_args --pty $SHELL"
 [[ $verbose -gt 0 ]] && echo "Running: $cmd"
 
 # Print the warning message in red
-echo -e "${RED} --- Warning:${NC} Your interactive session will consume resources - CPU cores, memory, and GPUs (on GPU nodes) while it remains open. Please close your session whenever you finish your work. Other users cannot use the resources allocated to your job until you close your session. Consider the use of batch jobs to optimize the resources allocation."
+echo -e "${RED} --- Warning:${NC}"
+echo "     Your session consumes resources (CPUs, memory, and GPUs) while it remains open."
+echo "     Close your session whenever you finish your work."
+echo "     Other users cannot use the resources allocated to your job until you close your session."
+echo "     Consider the use of batch jobs to optimize resources allocation."
 
 # Run
 $cmd
