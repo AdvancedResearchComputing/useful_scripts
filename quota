@@ -351,6 +351,7 @@ main() {
 			user_list=$USER
 	fi
 
+        echo -e "${YELLOW}Warning: quota values are not updated in real time and may take a few hours to refresh.${NC}"
 	print_storage_header;
 	for user in $user_list; do
 		print_home_quota "$user"
