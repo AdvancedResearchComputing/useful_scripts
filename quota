@@ -33,7 +33,7 @@ usage() {
     -h      show this help text
 
   EXAMPLE
-    $0 
+    $0
     $0 pid1 pid2 pid3
     $0 -h
   "
@@ -53,43 +53,52 @@ print_gpfs_quota() {
 }
 
 print_ess_gpfs_quota() {
-	local user=$1
-	local projects_cache="/home/$user/$CACHE_DIR/projects";
-	if [ -s "$projects_cache" ]; then
-		echo
+    local user=$1
+    local projects_cache="/home/$user/$CACHE_DIR/projects"
+    if [ -s "$projects_cache" ]; then
+        echo
 
-		json=$(cat "$projects_cache");
-		while read line; do
-			local colors=('' '' '' '' '' '' '')
+        json=$(cat "$projects_cache")
+        while read line; do
+            local colors=('' '' '' '' '' '' '')
+            local path=$(echo $line | awk -F\| '{print $1}')
+            local num_fields=$(awk -F\| '{print NF}' <<< "$line")
 
-			local path=$(echo $line | awk -F\| '{print $1}');
+            # If account is expired
+            if [ "$num_fields" -lt 3 ]; then
+		local row=("$user" "$path" "0" "0" "EXPIRED" "EXPIRED")
+                print_row row[@] colors[@]
+                continue
+            fi
 
-			local block_usage_kib=$(echo $line | awk -F\| '{print $2}');
-			local block_quota_kib=$(echo $line | awk -F\| '{print $3}');
+	    local block_usage_kib=$(echo $line | awk -F\| '{print $2}');
+	    local block_quota_kib=$(echo $line | awk -F\| '{print $3}');
 
-			local block_usage_gib=$(KiB_to_GB "$block_usage_kib")
-			local block_quota_gib=$(KiB_to_GB "$block_quota_kib")
+	    local block_usage_gib=$(KiB_to_GB "$block_usage_kib")
+	    local block_quota_gib=$(KiB_to_GB "$block_quota_kib")
 
-			local files_usage=$(echo $line | awk -F\| '{print $4}');
-			local files_quota=$(echo $line | awk -F\| '{print $5}');
+	    local files_usage=$(echo $line | awk -F\| '{print $4}');
+	    local files_quota=$(echo $line | awk -F\| '{print $5}');
 
-			local row=("$user" "$path" "$block_usage_gib" "$block_quota_gib"
-								 "$files_usage" "$files_quota")
-			print_row row[@] colors[@];
+            local row=("$user" "$path" "$block_usage_gib" "$block_quota_gib" "$files_usage" "$files_quota")
+            print_row row[@] colors[@]
 
-
-		done < <(cat "$projects_cache" | python3 <( echo '
-import sys, json;
-for (k, v) in json.load(sys.stdin).items(): 
-	block_usage = v["blockUsage"]
-	block_quota = v["blockQuota"]
-	files_usage = v["filesUsage"]
-	files_quota = v["filesQuota"]
-	print(f"{k}|{block_usage}|{block_quota}|{files_usage}|{files_quota}")
+        done < <(cat "$projects_cache" | python3 <( echo '
+import sys, json
+for k, v in json.load(sys.stdin).items():
+    path = k
+    block_usage = v.get("blockUsage", 0)
+    block_quota = v.get("blockQuota", 0)
+    files_usage = v.get("filesUsage", 0)
+    files_quota = v.get("filesQuota", 0)
+    if block_usage == 0 and block_quota == 0 and files_usage == 0 and files_quota == 0:
+        print(f"{path}|{path}")
+    else:
+        print(f"{path}|{block_usage}|{block_quota}|{files_usage}|{files_quota}")
 '))
-
-	fi
+    fi
 }
+
 
 print_home_quota() {
 	local user=$1
@@ -287,7 +296,7 @@ print_row() {
 print_padding() {
 	local colors=("${!1}");
 	local pad_type=${2-};
-	local pad_length="%-10 %-35 %-12 %-11 %-10 %-10 %-";
+	local pad_length="%-16 %-36 %-12 %-11 %-10 %-10 %-";
 	local header_format=(s s s s s s s);
 	local row_format=(s s .1f .0f s s s);
 	local i=0;
