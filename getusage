@@ -64,6 +64,11 @@ used_hrs=$(awk "BEGIN {printf \"%.2f\", $used_mins/3600}")
 run_hrs=$(awk "BEGIN {printf \"%.2f\", $run_mins/60}")
 avail_hrs=$(awk "BEGIN {printf \"%.2f\", ($total_hrs - $used_hrs - $run_hrs)}")
 
+if [ "$total_hrs" == "0.00" ]; then
+    echo "You have no permissions to see information about this account"
+    exit 1
+fi
+
 # Compute percentages
 used_pct=$(awk "BEGIN {printf \"%.1f\", ($used_hrs/$total_hrs)*100}")
 avail_pct=$(awk "BEGIN {printf \"%.1f\", ($avail_hrs/$total_hrs)*100}")
@@ -75,9 +80,28 @@ printf "  Available: %'12.2f (%s%%)\n" "$avail_hrs" "$avail_pct"
 printf "  Running:   %'12.2f (%s)\n" "$run_hrs" "Service Units committed for completing running jobs"
 echo
 
+# --- Get users to exclude (those with '0' in the second field) ---
+exclude_users=()
+while IFS='|' read -r user field2 _; do
+  if [[ "$field2" == "0" ]]; then
+    exclude_users+=("$user")
+  fi
+done < <(sacctmgr show assoc where account=$ACCOUNT format=user,grpsubmi -np | sort | uniq)
+
+# Convert to associative array for faster lookup
+declare -A exclude_map
+for u in "${exclude_users[@]}"; do
+  exclude_map["$u"]=1
+done
+
 # --- Per-user breakdown ---
 echo "User breakdown:"
 for user in "${!user_used_mins[@]}"; do
+  # Skip excluded users
+  if [[ -n "${exclude_map["$user"]}" ]]; then
+    continue
+  fi
+
   u_used_mins=${user_used_mins["$user"]}
   u_run_mins=${user_run_mins["$user"]:-0}
 
