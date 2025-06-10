@@ -1,0 +1,89 @@
+#!/bin/bash
+
+if [ -z "$1" ]; then
+  echo "Usage: $0 <account>"
+  exit 1
+fi
+
+ACCOUNT="$1"
+
+# Grab sshare output (with multi-cluster support)
+sshare_output=$(sshare -a -A "$ACCOUNT" -M tinkercliffs,owl,falcon --long --format=Account,User,GrpTRESMins,RawUsage,TRESRunMins -nP 2>/dev/null)
+
+if [ -z "$sshare_output" ]; then
+  echo "Error: No sshare data for account '$ACCOUNT'"
+  exit 1
+fi
+
+# Split into lines and filter out "CLUSTER:" lines
+IFS=$'\n' read -rd '' -a raw_lines <<< "$sshare_output"
+lines=()
+for line in "${raw_lines[@]}"; do
+  [[ "$line" =~ ^CLUSTER:\  ]] && continue
+  lines+=("$line")
+done
+
+# Initialize totals
+acct_name=""
+grp_mins=0
+used_mins=0
+run_mins=0
+
+declare -A user_used_mins
+declare -A user_run_mins
+
+# Aggregate data
+for line in "${lines[@]}"; do
+  acct_field=$(echo "$line" | cut -d'|' -f1)
+  user_field=$(echo "$line" | cut -d'|' -f2)
+
+  if [[ -z "$user_field" ]]; then
+    # Account-level summary line
+    acct_name="$acct_field"
+    this_grp_mins=$(echo "$line" | cut -d'|' -f3 | sed -n 's/.*billing=\([0-9]*\).*/\1/p')
+    this_used_mins=$(echo "$line" | cut -d'|' -f4)
+    this_run_mins=$(echo "$line" | cut -d'|' -f5 | sed -n 's/.*billing=\([0-9]*\).*/\1/p')
+
+    grp_mins=$((${this_grp_mins:-0})) ## TOTAL IS TOTAL, NOT PER CLUSER
+    used_mins=$((used_mins + ${this_used_mins:-0}))
+    run_mins=$((run_mins + ${this_run_mins:-0}))
+  else
+    # Per-user line
+    user="$user_field"
+    u_used_mins=$(echo "$line" | cut -d'|' -f4)
+    u_run_mins=$(echo "$line" | cut -d'|' -f5 | sed -n 's/.*billing=\([0-9]*\).*/\1/p')
+
+    user_used_mins["$user"]=$(( ${user_used_mins["$user"]:-0} + ${u_used_mins:-0} ))
+    user_run_mins["$user"]=$(( ${user_run_mins["$user"]:-0} + ${u_run_mins:-0} ))
+  fi
+done
+
+# Compute hours as floats
+total_hrs=$(awk "BEGIN {printf \"%.2f\", $grp_mins/60}")
+used_hrs=$(awk "BEGIN {printf \"%.2f\", $used_mins/3600}")
+run_hrs=$(awk "BEGIN {printf \"%.2f\", $run_mins/60}")
+avail_hrs=$(awk "BEGIN {printf \"%.2f\", ($total_hrs - $used_hrs - $run_hrs)}")
+
+# Compute percentages
+used_pct=$(awk "BEGIN {printf \"%.1f\", ($used_hrs/$total_hrs)*100}")
+avail_pct=$(awk "BEGIN {printf \"%.1f\", ($avail_hrs/$total_hrs)*100}")
+
+echo "Account: $acct_name"
+printf "  Total:     %'12.2f\n" "$total_hrs"
+printf "  Used:      %'12.2f (%s%%)\n" "$used_hrs" "$used_pct"
+printf "  Available: %'12.2f (%s%%)\n" "$avail_hrs" "$avail_pct"
+printf "  Running:   %'12.2f (%s)\n" "$run_hrs" "Service Units committed for completing running jobs"
+echo
+
+# --- Per-user breakdown ---
+echo "User breakdown:"
+for user in "${!user_used_mins[@]}"; do
+  u_used_mins=${user_used_mins["$user"]}
+  u_run_mins=${user_run_mins["$user"]:-0}
+
+  u_used_hrs=$(awk "BEGIN {printf \"%.2f\", $u_used_mins/3600}")
+  u_run_hrs=$(awk "BEGIN {printf \"%.2f\", $u_run_mins/60}")
+
+  printf "  %-15s Used: %'12.2f h | Running: %'12.2f h\n" \
+    "$user" "$u_used_hrs" "$u_run_hrs"
+done
