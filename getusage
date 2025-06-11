@@ -82,7 +82,7 @@ getAccountUsage() {
     # Parent account
     parent=$(sacctmgr show assoc where account="$1" format=parentname -np cluster=tinkercliffs | grep -v "^|" | tr -d "|")
     read parent_total_hrs parent_used_hrs parent_run_hrs <<< "$(getParentAccountUsage $parent)"
-    parent_avail_hrs=$(awk "BEGIN {printf \"%.2f\", ($parent_total_hrs - $parent_used_hrs - $parent_run_hrs)}")
+    parent_avail_hrs=$(awk "BEGIN {diff = $parent_total_hrs - $parent_used_hrs - $parent_run_hrs; printf \"%.2f\", (diff > 0 ? diff : 0)}")
     parent_avail_pct=$(awk "BEGIN {printf \"%.1f\", ($parent_avail_hrs/$parent_total_hrs)*100}")
   fi
 
@@ -138,7 +138,7 @@ getAccountUsage() {
   total_hrs=$(awk "BEGIN {printf \"%.2f\", $grp_mins/60}")
   used_hrs=$(awk "BEGIN {printf \"%.2f\", $used_mins/3600}")
   run_hrs=$(awk "BEGIN {printf \"%.2f\", $run_mins/60}")
-  avail_hrs=$(awk "BEGIN {printf \"%.2f\", ($total_hrs - $used_hrs - $run_hrs)}")
+  avail_hrs=$(awk "BEGIN {diff = $total_hrs - $used_hrs - $run_hrs; printf \"%.2f\", (diff > 0 ? diff : 0)}")
 
   if [ "$total_hrs" == "0.00" ]; then
     echo "You have no permissions to see information about this account or the account doesn't exist"
@@ -209,8 +209,8 @@ if [[ -n "$ACCOUNT" ]]; then
   getAccountUsage ${ACCOUNT}
 elif [[ -n "$PID" ]]; then
   ## Free accounts
-  read total_hrs used_hrs run_hrs <<< "$(getParentAccountUsage __${PID}__)"
-  avail_hrs=$(awk "BEGIN {printf \"%.2f\", ($total_hrs - $used_hrs - $run_hrs)}")
+  read total_hrs used_hrs run_hrs <<< "$(getParentAccountUsage __${PID}__)"  
+  avail_hrs=$(awk "BEGIN {diff = $total_hrs - $used_hrs - $run_hrs; printf \"%.2f\", (diff > 0 ? diff : 0)}")
   used_pct=$(awk "BEGIN {printf \"%.1f\", ($used_hrs/$total_hrs)*100}")
   avail_pct=$(awk "BEGIN {printf \"%.1f\", ($avail_hrs/$total_hrs)*100}")
 
