@@ -1,113 +1,232 @@
 #!/bin/bash
 
-if [ -z "$1" ]; then
-  echo "Usage: $0 <account>"
-  exit 1
-fi
+show_usage() {
+  echo "Usage:"
+  echo "  getusage --account <slurm_account_name>"
+  echo "  getusage --pid <VTPIDpid> (PID of the VT PI)"
+  exit 0
+}
 
-ACCOUNT="$1"
+# Parse arguments
+ACCOUNT=""
+PID=""
 
-# Grab sshare output (with multi-cluster support)
-sshare_output=$(sshare -a -A "$ACCOUNT" -M tinkercliffs,owl,falcon --long --format=Account,User,GrpTRESMins,RawUsage,TRESRunMins -nP 2>/dev/null)
-
-if [ -z "$sshare_output" ]; then
-  echo "Error: No sshare data for account '$ACCOUNT'"
-  exit 1
-fi
-
-# Split into lines and filter out "CLUSTER:" lines
-IFS=$'\n' read -rd '' -a raw_lines <<< "$sshare_output"
-lines=()
-for line in "${raw_lines[@]}"; do
-  [[ "$line" =~ ^CLUSTER:\  ]] && continue
-  lines+=("$line")
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --account)
+      if [[ -n "$2" && "$2" != --* ]]; then
+        ACCOUNT="$2"
+        shift 2
+      else
+        show_usage
+      fi
+      ;;
+    --pid)
+      if [[ -n "$2" && "$2" != --* ]]; then
+        PID="$2"
+        shift 2
+      else
+        show_usage
+      fi
+      ;;
+    *)
+      show_usage
+      ;;
+  esac
 done
 
-# Initialize totals
-acct_name=""
-grp_mins=0
-used_mins=0
-run_mins=0
+# Validate that only one is provided
+if [[ -n "$ACCOUNT" && -n "$PID" ]] || [[ -z "$ACCOUNT" && -z "$PID" ]]; then
+  show_usage
+fi
 
-declare -A user_used_mins
-declare -A user_run_mins
+getParentAccountUsage() {  
+  local sshare_output
+  sshare_output=$(sshare -a -A "$1" -M tinkercliffs,owl,falcon --long --format=Account,User,GrpTRESMins,RawUsage,TRESRunMins -nP 2>/dev/null)
 
-# Aggregate data
-for line in "${lines[@]}"; do
-  acct_field=$(echo "$line" | cut -d'|' -f1)
-  user_field=$(echo "$line" | cut -d'|' -f2)
+  # Split into lines and filter out "CLUSTER:" lines
+  IFS=$'\n' read -rd '' -a raw_lines <<< "$sshare_output"
+  lines=()
+  for line in "${raw_lines[@]}"; do
+    [[ "$line" =~ ^CLUSTER:\  ]] && continue
+    lines+=("$line")
+  done
 
-  if [[ -z "$user_field" ]]; then
-    # Account-level summary line
-    acct_name="$acct_field"
+  # Initialize totals
+  local grp_mins=0
+  local used_mins=0
+  local run_mins=0
+
+  # Aggregate data
+  for line in "${lines[@]}"; do
     this_grp_mins=$(echo "$line" | cut -d'|' -f3 | sed -n 's/.*billing=\([0-9]*\).*/\1/p')
     this_used_mins=$(echo "$line" | cut -d'|' -f4)
     this_run_mins=$(echo "$line" | cut -d'|' -f5 | sed -n 's/.*billing=\([0-9]*\).*/\1/p')
 
-    grp_mins=$((${this_grp_mins:-0})) ## TOTAL IS TOTAL, NOT PER CLUSER
+    grp_mins=$((${this_grp_mins:-0}))  # Overwrites with latest total
     used_mins=$((used_mins + ${this_used_mins:-0}))
     run_mins=$((run_mins + ${this_run_mins:-0}))
-  else
-    # Per-user line
-    user="$user_field"
-    u_used_mins=$(echo "$line" | cut -d'|' -f4)
-    u_run_mins=$(echo "$line" | cut -d'|' -f5 | sed -n 's/.*billing=\([0-9]*\).*/\1/p')
+  done
 
-    user_used_mins["$user"]=$(( ${user_used_mins["$user"]:-0} + ${u_used_mins:-0} ))
-    user_run_mins["$user"]=$(( ${user_run_mins["$user"]:-0} + ${u_run_mins:-0} ))
+  local total_hrs used_hrs run_hrs
+  total_hrs=$(awk "BEGIN {printf \"%.2f\", $grp_mins/60}")
+  used_hrs=$(awk "BEGIN {printf \"%.2f\", $used_mins/3600}")
+  run_hrs=$(awk "BEGIN {printf \"%.2f\", $run_mins/60}")
+
+  echo "$total_hrs $used_hrs $run_hrs"
+}
+
+getAccountUsage() {
+  # Only run if $1 does NOT end with '-paid'
+  if [[ "$1" != *-paid ]]; then
+    # Parent account
+    parent=$(sacctmgr show assoc where account="$1" format=parentname -np cluster=tinkercliffs | grep -v "^|" | tr -d "|")
+    read parent_total_hrs parent_used_hrs parent_run_hrs <<< "$(getParentAccountUsage $parent)"
+    parent_avail_hrs=$(awk "BEGIN {printf \"%.2f\", ($parent_total_hrs - $parent_used_hrs - $parent_run_hrs)}")
+    parent_avail_pct=$(awk "BEGIN {printf \"%.1f\", ($parent_avail_hrs/$parent_total_hrs)*100}")
   fi
-done
 
-# Compute hours as floats
-total_hrs=$(awk "BEGIN {printf \"%.2f\", $grp_mins/60}")
-used_hrs=$(awk "BEGIN {printf \"%.2f\", $used_mins/3600}")
-run_hrs=$(awk "BEGIN {printf \"%.2f\", $run_mins/60}")
-avail_hrs=$(awk "BEGIN {printf \"%.2f\", ($total_hrs - $used_hrs - $run_hrs)}")
+  local sshare_output
+  sshare_output=$(sshare -a -A "$1" -M tinkercliffs,owl,falcon --long --format=Account,User,GrpTRESMins,RawUsage,TRESRunMins -nP 2>/dev/null)
 
-if [ "$total_hrs" == "0.00" ]; then
-    echo "You have no permissions to see information about this account"
-    exit 1
+  # Split into lines and filter out "CLUSTER:" lines
+  local raw_lines lines line
+  IFS=$'\n' read -rd '' -a raw_lines <<< "$sshare_output"
+  lines=()
+  for line in "${raw_lines[@]}"; do
+    [[ "$line" =~ ^CLUSTER:\  ]] && continue
+    lines+=("$line")
+  done
+
+  # Initialize totals
+  local acct_name=""
+  local grp_mins=0
+  local used_mins=0
+  local run_mins=0
+
+  declare -A user_used_mins
+  declare -A user_run_mins
+
+  # Aggregate data
+  for line in "${lines[@]}"; do
+    local acct_field user_field this_grp_mins this_used_mins this_run_mins
+    acct_field=$(echo "$line" | cut -d'|' -f1)
+    user_field=$(echo "$line" | cut -d'|' -f2)
+
+    if [[ -z "$user_field" ]]; then
+      acct_name="$acct_field"
+      this_grp_mins=$(echo "$line" | cut -d'|' -f3 | sed -n 's/.*billing=\([0-9]*\).*/\1/p')
+      this_used_mins=$(echo "$line" | cut -d'|' -f4)
+      this_run_mins=$(echo "$line" | cut -d'|' -f5 | sed -n 's/.*billing=\([0-9]*\).*/\1/p')
+
+      grp_mins=$((${this_grp_mins:-0}))
+      used_mins=$((used_mins + ${this_used_mins:-0}))
+      run_mins=$((run_mins + ${this_run_mins:-0}))
+    else
+      local user="$user_field"
+      local u_used_mins u_run_mins
+      u_used_mins=$(echo "$line" | cut -d'|' -f4)
+      u_run_mins=$(echo "$line" | cut -d'|' -f5 | sed -n 's/.*billing=\([0-9]*\).*/\1/p')
+
+      user_used_mins["$user"]=$(( ${user_used_mins["$user"]:-0} + ${u_used_mins:-0} ))
+      user_run_mins["$user"]=$(( ${user_run_mins["$user"]:-0} + ${u_run_mins:-0} ))
+    fi
+  done
+
+  # Compute hours as floats
+  local total_hrs used_hrs run_hrs avail_hrs
+  total_hrs=$(awk "BEGIN {printf \"%.2f\", $grp_mins/60}")
+  used_hrs=$(awk "BEGIN {printf \"%.2f\", $used_mins/3600}")
+  run_hrs=$(awk "BEGIN {printf \"%.2f\", $run_mins/60}")
+  avail_hrs=$(awk "BEGIN {printf \"%.2f\", ($total_hrs - $used_hrs - $run_hrs)}")
+
+  if [ "$total_hrs" == "0.00" ]; then
+    echo "You have no permissions to see information about this account or the account doesn't exist"
+    return 1
+  fi
+
+  # Compute percentages
+  local used_pct avail_pct
+  used_pct=$(awk "BEGIN {printf \"%.1f\", ($used_hrs/$total_hrs)*100}")
+  avail_pct=$(awk "BEGIN {printf \"%.1f\", ($avail_hrs/$total_hrs)*100}")
+
+  echo "Account: $acct_name"
+  printf "  Account total:     %'12.2f\n" "$total_hrs"
+  printf "  Account running:   %'12.2f --> Service Units committed for completing running jobs\n" "$run_hrs"
+  printf "  Account used:      %'12.2f (%s%%)\n" "$used_hrs" "$used_pct"
+  printf "  Account available: %'12.2f (%s%%)\n" "$avail_hrs" "$avail_pct"
+  if [[ "$1" != *-paid ]]; then
+    actual_available=$(awk "BEGIN {
+    parent = $parent_total_hrs - $parent_used_hrs - $parent_run_hrs;
+    child = $total_hrs - $used_hrs - $run_hrs;
+    printf \"%.2f\", (parent < child) ? $parent_avail_hrs : $avail_hrs;
+    }")
+
+    if [[ "$avail_hrs" != "$actual_available" ]]; then
+      availability_warning="Warning: availability of Service Units in this account is limited by the availability of the PI's"
+    else
+      availability_warning=""
+    fi
+
+    printf "  PI available:      %'12.2f (%s%%) out of %'.2f Service Units shared among all PI's accounts\n" "$parent_avail_hrs" "$parent_avail_pct" "$parent_total_hrs"
+    printf "  Actual available:  %'12.2f %s\n" "$actual_available" "$availability_warning"
+  fi
+  echo  
+
+  # Get users to exclude (those with '0' in the second field)
+  local exclude_users=()
+  while IFS='|' read -r user field2 _; do
+    if [[ "$field2" == "0" ]]; then
+      exclude_users+=("$user")
+    fi
+  done < <(sacctmgr show assoc where account=$ACCOUNT format=user,grpsubmi -np | sort | uniq)
+
+  declare -A exclude_map
+  for u in "${exclude_users[@]}"; do
+    exclude_map["$u"]=1
+  done
+
+  # Per-user breakdown
+  echo "  User breakdown:"
+  for user in "${!user_used_mins[@]}"; do
+    if [[ -n "${exclude_map["$user"]}" ]]; then
+      continue
+    fi
+
+    local u_used_mins u_run_mins u_used_hrs u_run_hrs
+    u_used_mins=${user_used_mins["$user"]}
+    u_run_mins=${user_run_mins["$user"]:-0}
+
+    u_used_hrs=$(awk "BEGIN {printf \"%.2f\", $u_used_mins/3600}")
+    u_run_hrs=$(awk "BEGIN {printf \"%.2f\", $u_run_mins/60}")
+
+    printf "    %-15s Used: %'12.2f h | Running: %'12.2f h\n" "$user" "$u_used_hrs" "$u_run_hrs"
+  done
+}
+
+# Perform action based on input
+if [[ -n "$ACCOUNT" ]]; then
+  getAccountUsage ${ACCOUNT}
+elif [[ -n "$PID" ]]; then
+  ## Free accounts
+  read total_hrs used_hrs run_hrs <<< "$(getParentAccountUsage __${PID}__)"
+  avail_hrs=$(awk "BEGIN {printf \"%.2f\", ($total_hrs - $used_hrs - $run_hrs)}")
+  used_pct=$(awk "BEGIN {printf \"%.1f\", ($used_hrs/$total_hrs)*100}")
+  avail_pct=$(awk "BEGIN {printf \"%.1f\", ($avail_hrs/$total_hrs)*100}")
+
+  echo "PI: $PID"
+  printf "  Free-tier allocation\n"
+  printf "  PI total:     %'12.2f\n" "$total_hrs"
+  printf "  PI running:   %'12.2f --> Service Units committed for completing running jobs\n" "$run_hrs"
+  printf "  PI used:      %'12.2f (%s%%)\n" "$used_hrs" "$used_pct"
+  printf "  PI available: %'12.2f (%s%%) --> Service Units shared among all PI's accounts\n" "$avail_hrs" "$avail_pct"
+  echo
+
+  children=$(sacctmgr show assoc format=account,parentname,grpsubmit -np cluster=tinkercliffs | awk -F'|' -v parentname="__${PID}__" '$2 == parentname && $3 != 0 {print $1}')
+
+  for ACCOUNT in $children; do
+    getAccountUsage "$ACCOUNT"
+    echo
+  done
+ 
 fi
-
-# Compute percentages
-used_pct=$(awk "BEGIN {printf \"%.1f\", ($used_hrs/$total_hrs)*100}")
-avail_pct=$(awk "BEGIN {printf \"%.1f\", ($avail_hrs/$total_hrs)*100}")
-
-echo "Account: $acct_name"
-printf "  Total:     %'12.2f\n" "$total_hrs"
-printf "  Used:      %'12.2f (%s%%)\n" "$used_hrs" "$used_pct"
-printf "  Available: %'12.2f (%s%%)\n" "$avail_hrs" "$avail_pct"
-printf "  Running:   %'12.2f (%s)\n" "$run_hrs" "Service Units committed for completing running jobs"
-echo
-
-# --- Get users to exclude (those with '0' in the second field) ---
-exclude_users=()
-while IFS='|' read -r user field2 _; do
-  if [[ "$field2" == "0" ]]; then
-    exclude_users+=("$user")
-  fi
-done < <(sacctmgr show assoc where account=$ACCOUNT format=user,grpsubmi -np | sort | uniq)
-
-# Convert to associative array for faster lookup
-declare -A exclude_map
-for u in "${exclude_users[@]}"; do
-  exclude_map["$u"]=1
-done
-
-# --- Per-user breakdown ---
-echo "User breakdown:"
-for user in "${!user_used_mins[@]}"; do
-  # Skip excluded users
-  if [[ -n "${exclude_map["$user"]}" ]]; then
-    continue
-  fi
-
-  u_used_mins=${user_used_mins["$user"]}
-  u_run_mins=${user_run_mins["$user"]:-0}
-
-  u_used_hrs=$(awk "BEGIN {printf \"%.2f\", $u_used_mins/3600}")
-  u_run_hrs=$(awk "BEGIN {printf \"%.2f\", $u_run_mins/60}")
-
-  printf "  %-15s Used: %'12.2f h | Running: %'12.2f h\n" \
-    "$user" "$u_used_hrs" "$u_run_hrs"
-done
