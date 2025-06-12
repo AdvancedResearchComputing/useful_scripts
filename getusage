@@ -3,13 +3,15 @@
 show_usage() {
   echo "Usage:"
   echo "  getusage --account <slurm_account_name>"
-  echo "  getusage --pid <VTPIDpid> (PID of the VT PI)"
+  echo "  getusage --pi <VT_PI_pid> (PID/username of the VT PI)"
+  echo "  getusage --user <VT_pid> (PID/username of the VT user)"
   exit 0
 }
 
 # Parse arguments
 ACCOUNT=""
-PID=""
+PI=""
+USER=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -21,9 +23,17 @@ while [[ $# -gt 0 ]]; do
         show_usage
       fi
       ;;
-    --pid)
+    --pi)
       if [[ -n "$2" && "$2" != --* ]]; then
-        PID="$2"
+        PI="$2"
+        shift 2
+      else
+        show_usage
+      fi
+      ;;
+    --user)
+      if [[ -n "$2" && "$2" != --* ]]; then
+        USER="$2"
         shift 2
       else
         show_usage
@@ -35,8 +45,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Validate that only one is provided
-if [[ -n "$ACCOUNT" && -n "$PID" ]] || [[ -z "$ACCOUNT" && -z "$PID" ]]; then
+# Validate that only one of --account, --pi, or --user is provided
+num_args_set=0
+[[ -n "$ACCOUNT" ]] && ((num_args_set++))
+[[ -n "$PI" ]] && ((num_args_set++))
+[[ -n "$USER" ]] && ((num_args_set++))
+
+if [[ $num_args_set -ne 1 ]]; then
   show_usage
 fi
 
@@ -81,6 +96,12 @@ getAccountUsage() {
   if [[ "$1" != *-paid ]]; then
     # Parent account
     parent=$(sacctmgr show assoc where account="$1" format=parentname -np cluster=tinkercliffs | grep -v "^|" | tr -d "|")
+   
+    if [[ "$parent" == "" ]]; then
+      echo "Account $1 account doesn't exist"
+      exit 0
+    fi
+    
     read parent_total_hrs parent_used_hrs parent_run_hrs <<< "$(getParentAccountUsage $parent)"
     parent_avail_hrs=$(awk "BEGIN {diff = $parent_total_hrs - $parent_used_hrs - $parent_run_hrs; printf \"%.2f\", (diff > 0 ? diff : 0)}")
     parent_avail_pct=$(awk "BEGIN {printf \"%.1f\", ($parent_avail_hrs/$parent_total_hrs)*100}")
@@ -106,7 +127,7 @@ getAccountUsage() {
 
   declare -A user_used_mins
   declare -A user_run_mins
-
+ 
   # Aggregate data
   for line in "${lines[@]}"; do
     local acct_field user_field this_grp_mins this_used_mins this_run_mins
@@ -133,17 +154,12 @@ getAccountUsage() {
     fi
   done
 
-  # Compute hours as floats
+  # Compute hours as floats  
   local total_hrs used_hrs run_hrs avail_hrs
   total_hrs=$(awk "BEGIN {printf \"%.2f\", $grp_mins/60}")
   used_hrs=$(awk "BEGIN {printf \"%.2f\", $used_mins/3600}")
   run_hrs=$(awk "BEGIN {printf \"%.2f\", $run_mins/60}")
   avail_hrs=$(awk "BEGIN {diff = $total_hrs - $used_hrs - $run_hrs; printf \"%.2f\", (diff > 0 ? diff : 0)}")
-
-  if [ "$total_hrs" == "0.00" ]; then
-    echo "You have no permissions to see information about this account or the account doesn't exist"
-    return 1
-  fi
 
   # Compute percentages
   local used_pct avail_pct
@@ -207,14 +223,28 @@ getAccountUsage() {
 # Perform action based on input
 if [[ -n "$ACCOUNT" ]]; then
   getAccountUsage ${ACCOUNT}
-elif [[ -n "$PID" ]]; then
+elif [[ -n "$USER" ]]; then
+  accounts=$(sacctmgr show assoc where user=${USER} format=account -nP cluster=tinkercliffs)
+
+  for ACCOUNT in $accounts; do
+    getAccountUsage "$ACCOUNT"
+    echo
+  done
+
+elif [[ -n "$PI" ]]; then
   ## Free accounts
-  read total_hrs used_hrs run_hrs <<< "$(getParentAccountUsage __${PID}__)"  
+  read total_hrs used_hrs run_hrs <<< "$(getParentAccountUsage __${PI}__)"  
+ 
+  if [[ "$total_hrs" == "0.00" ]]; then
+    echo "PI ${PI} doesn't exist"
+    exit 0
+  fi
+
   avail_hrs=$(awk "BEGIN {diff = $total_hrs - $used_hrs - $run_hrs; printf \"%.2f\", (diff > 0 ? diff : 0)}")
   used_pct=$(awk "BEGIN {printf \"%.1f\", ($used_hrs/$total_hrs)*100}")
   avail_pct=$(awk "BEGIN {printf \"%.1f\", ($avail_hrs/$total_hrs)*100}")
 
-  echo "PI: $PID"
+  echo "PI: $PI"
   printf "  Free-tier allocation\n"
   printf "  PI total:     %'12.2f\n" "$total_hrs"
   printf "  PI running:   %'12.2f --> Service Units committed for completing running jobs\n" "$run_hrs"
@@ -222,7 +252,7 @@ elif [[ -n "$PID" ]]; then
   printf "  PI available: %'12.2f (%s%%) --> Service Units shared among all PI's accounts\n" "$avail_hrs" "$avail_pct"
   echo
 
-  children=$(sacctmgr show assoc format=account,parentname,grpsubmit -np cluster=tinkercliffs | awk -F'|' -v parentname="__${PID}__" '$2 == parentname && $3 != 0 {print $1}')
+  children=$(sacctmgr show assoc format=account,parentname,grpsubmit -np cluster=tinkercliffs | awk -F'|' -v parentname="__${PI}__" '$2 == parentname && $3 != 0 {print $1}')
 
   for ACCOUNT in $children; do
     getAccountUsage "$ACCOUNT"
