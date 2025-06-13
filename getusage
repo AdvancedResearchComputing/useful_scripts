@@ -107,6 +107,22 @@ getAccountUsage() {
     parent_avail_pct=$(awk "BEGIN {printf \"%.1f\", ($parent_avail_hrs/$parent_total_hrs)*100}")
   fi
 
+  # Get users to exclude (those with '0' in the second field)
+  local exclude_users=()
+  while IFS='|' read -r user field2 _; do
+    if [[ "$user" == "" && "$field2" == "0" ]]; then
+      echo "The account $ACCOUNT is not active"
+      return
+    elif [[ "$field2" == "0" ]]; then
+      exclude_users+=("$user")
+    fi
+  done < <(sacctmgr show assoc where account=$ACCOUNT format=user,grpsubmi -np | sort | uniq)
+
+  declare -A exclude_map
+  for u in "${exclude_users[@]}"; do
+    exclude_map["$u"]=1
+  done
+
   local sshare_output
   sshare_output=$(sshare -a -A "$1" -M tinkercliffs,owl,falcon --long --format=Account,User,GrpTRESMins,RawUsage,TRESRunMins -nP 2>/dev/null)
 
@@ -188,19 +204,6 @@ getAccountUsage() {
     printf "  Actual available:  %'12.2f %s\n" "$actual_available" "$availability_warning"
   fi
   echo  
-
-  # Get users to exclude (those with '0' in the second field)
-  local exclude_users=()
-  while IFS='|' read -r user field2 _; do
-    if [[ "$field2" == "0" ]]; then
-      exclude_users+=("$user")
-    fi
-  done < <(sacctmgr show assoc where account=$ACCOUNT format=user,grpsubmi -np | sort | uniq)
-
-  declare -A exclude_map
-  for u in "${exclude_users[@]}"; do
-    exclude_map["$u"]=1
-  done
 
   # Per-user breakdown
   echo "  User breakdown:"
