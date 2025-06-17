@@ -5,6 +5,8 @@ show_usage() {
   echo "  getusage --account <slurm_account_name>"
   echo "  getusage --pi <VT_PI_pid> (PID/username of the VT PI)"
   echo "  getusage --user <VT_pid> (PID/username of the VT user)"
+  echo "Optional:"
+  echo "  --cluster <cluster_name> (tinkercliffs, owl, falcon)"
   exit 0
 }
 
@@ -12,6 +14,7 @@ show_usage() {
 ACCOUNT=""
 PI=""
 USER=""
+CLUSTER=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -39,6 +42,22 @@ while [[ $# -gt 0 ]]; do
         show_usage
       fi
       ;;
+    --cluster)
+      if [[ -n "$2" && "$2" != --* ]]; then
+        case "$2" in
+          tinkercliffs|owl|falcon)
+            CLUSTER="$2"
+            shift 2
+            ;;
+          *)
+            echo "ERROR: Invalid cluster name '$2'. Must be one of: tinkercliffs, owl, falcon."
+            exit 1
+            ;;
+        esac
+      else
+        show_usage
+      fi
+      ;;
     *)
       show_usage
       ;;
@@ -57,7 +76,7 @@ fi
 
 getParentAccountUsage() {  
   local sshare_output
-  sshare_output=$(sshare -a -A "$1" -M tinkercliffs,owl,falcon --long --format=Account,User,GrpTRESMins,RawUsage,TRESRunMins -nP 2>/dev/null)
+  sshare_output=$(sshare -a -A "$1" -M "$2" --long --format=Account,User,GrpTRESMins,RawUsage,TRESRunMins -nP 2>/dev/null)
 
   # Split into lines and filter out "CLUSTER:" lines
   IFS=$'\n' read -rd '' -a raw_lines <<< "$sshare_output"
@@ -95,14 +114,14 @@ getAccountUsage() {
   # Only run if $1 does NOT end with '-paid'
   if [[ "$1" != *-paid ]]; then
     # Parent account
-    parent=$(sacctmgr show assoc where account="$1" format=parentname -np cluster=tinkercliffs | grep -v "^|" | tr -d "|")
+    parent=$(sacctmgr show assoc where account="$1" format=parentname -np cluster="$2" | grep -v "^|" | tr -d "|")
    
     if [[ "$parent" == "" ]]; then
-      echo "Account $1 account doesn't exist"
+      echo "ERROR: Account $1 account doesn't exist"
       exit 0
     fi
     
-    read parent_total_hrs parent_used_hrs parent_run_hrs <<< "$(getParentAccountUsage $parent)"
+    read parent_total_hrs parent_used_hrs parent_run_hrs <<< "$(getParentAccountUsage $parent $2)"
     parent_avail_hrs=$(awk "BEGIN {diff = $parent_total_hrs - $parent_used_hrs - $parent_run_hrs; printf \"%.2f\", (diff > 0 ? diff : 0)}")
     parent_avail_pct=$(awk "BEGIN {printf \"%.1f\", ($parent_avail_hrs/$parent_total_hrs)*100}")
   fi
@@ -111,7 +130,7 @@ getAccountUsage() {
   local exclude_users=()
   while IFS='|' read -r user field2 _; do
     if [[ "$user" == "" && "$field2" == "0" ]]; then
-      echo "The account $ACCOUNT is not active"
+      echo "ERROR: The account $ACCOUNT is not active"
       return
     elif [[ "$field2" == "0" ]]; then
       exclude_users+=("$user")
@@ -124,7 +143,7 @@ getAccountUsage() {
   done
 
   local sshare_output
-  sshare_output=$(sshare -a -A "$1" -M tinkercliffs,owl,falcon --long --format=Account,User,GrpTRESMins,RawUsage,TRESRunMins -nP 2>/dev/null)
+  sshare_output=$(sshare -a -A "$1" -M "$2" --long --format=Account,User,GrpTRESMins,RawUsage,TRESRunMins -nP 2>/dev/null)
 
   # Split into lines and filter out "CLUSTER:" lines
   local raw_lines lines line
@@ -182,11 +201,11 @@ getAccountUsage() {
   used_pct=$(awk "BEGIN {printf \"%.1f\", ($used_hrs/$total_hrs)*100}")
   avail_pct=$(awk "BEGIN {printf \"%.1f\", ($avail_hrs/$total_hrs)*100}")
 
-  echo "Account: $acct_name"
-  printf "  Account total:     %'12.2f\n" "$total_hrs"
-  printf "  Account running:   %'12.2f --> Service Units committed for completing running jobs\n" "$run_hrs"
-  printf "  Account used:      %'12.2f (%s%%)\n" "$used_hrs" "$used_pct"
-  printf "  Account available: %'12.2f (%s%%)\n" "$avail_hrs" "$avail_pct"
+  echo "  Account: $acct_name"
+  printf "    Account total:     %'12.2f\n" "$total_hrs"
+  printf "    Account running:   %'12.2f --> Service Units committed for completing running jobs\n" "$run_hrs"
+  printf "    Account used:      %'12.2f (%s%%)\n" "$used_hrs" "$used_pct"
+  printf "    Account available: %'12.2f (%s%%)\n" "$avail_hrs" "$avail_pct"
   if [[ "$1" != *-paid ]]; then
     actual_available=$(awk "BEGIN {
     parent = $parent_total_hrs - $parent_used_hrs - $parent_run_hrs;
@@ -200,13 +219,13 @@ getAccountUsage() {
       availability_warning=""
     fi
 
-    printf "  PI available:      %'12.2f (%s%%) out of %'.2f Service Units shared among all PI's accounts\n" "$parent_avail_hrs" "$parent_avail_pct" "$parent_total_hrs"
-    printf "  Actual available:  %'12.2f %s\n" "$actual_available" "$availability_warning"
+    printf "    PI available:      %'12.2f (%s%%) out of %'.2f Service Units shared among all PI's accounts\n" "$parent_avail_hrs" "$parent_avail_pct" "$parent_total_hrs"
+    printf "    Actual available:  %'12.2f %s\n" "$actual_available" "$availability_warning"
   fi
   echo  
 
   # Per-user breakdown
-  echo "  User breakdown:"
+  echo "    User breakdown:"
   for user in "${!user_used_mins[@]}"; do
     if [[ -n "${exclude_map["$user"]}" ]]; then
       continue
@@ -219,47 +238,65 @@ getAccountUsage() {
     u_used_hrs=$(awk "BEGIN {printf \"%.2f\", $u_used_mins/3600}")
     u_run_hrs=$(awk "BEGIN {printf \"%.2f\", $u_run_mins/60}")
 
-    printf "    %-15s Used: %'12.2f h | Running: %'12.2f h\n" "$user" "$u_used_hrs" "$u_run_hrs"
+    printf "      %-15s Used: %'12.2f h | Running: %'12.2f h\n" "$user" "$u_used_hrs" "$u_run_hrs"
   done
 }
 
 # Perform action based on input
 if [[ -n "$ACCOUNT" ]]; then
-  getAccountUsage ${ACCOUNT}
+  for cluster in tinkercliffs owl falcon; do
+      if [[ -n "$CLUSTER" && "$CLUSTER" != "$cluster" ]]; then
+          continue
+      fi
+      echo "Cluster: $cluster"
+      getAccountUsage "${ACCOUNT}" "$cluster"
+      echo
+  done
 elif [[ -n "$USER" ]]; then
   accounts=$(sacctmgr show assoc where user=${USER} format=account -nP cluster=tinkercliffs)
-
-  for ACCOUNT in $accounts; do
-    getAccountUsage "$ACCOUNT"
-    echo
+  for cluster in tinkercliffs owl falcon; do
+      if [[ -n "$CLUSTER" && "$CLUSTER" != "$cluster" ]]; then
+          continue
+      fi
+      echo "Cluster: $cluster"
+      for ACCOUNT in $accounts; do
+        getAccountUsage "$ACCOUNT" $cluster
+        echo
+      done
+      echo
   done
-
 elif [[ -n "$PI" ]]; then
-  ## Free accounts
-  read total_hrs used_hrs run_hrs <<< "$(getParentAccountUsage __${PI}__)"  
- 
-  if [[ "$total_hrs" == "0.00" ]]; then
-    echo "PI ${PI} doesn't exist"
-    exit 0
-  fi
+  for cluster in tinkercliffs owl falcon; do
+    if [[ -n "$CLUSTER" && "$CLUSTER" != "$cluster" ]]; then
+            continue
+    fi
+    echo "Cluster: $cluster"
+    ## Free accounts
+    read total_hrs used_hrs run_hrs <<< "$(getParentAccountUsage __${PI}__ $cluster)"  
+    
+    if [[ "$total_hrs" == "0.00" ]]; then
+        echo "ERROR: PI ${PI} doesn't exist"
+        exit 0
+    fi
 
-  avail_hrs=$(awk "BEGIN {diff = $total_hrs - $used_hrs - $run_hrs; printf \"%.2f\", (diff > 0 ? diff : 0)}")
-  used_pct=$(awk "BEGIN {printf \"%.1f\", ($used_hrs/$total_hrs)*100}")
-  avail_pct=$(awk "BEGIN {printf \"%.1f\", ($avail_hrs/$total_hrs)*100}")
+    avail_hrs=$(awk "BEGIN {diff = $total_hrs - $used_hrs - $run_hrs; printf \"%.2f\", (diff > 0 ? diff : 0)}")
+    used_pct=$(awk "BEGIN {printf \"%.1f\", ($used_hrs/$total_hrs)*100}")
+    avail_pct=$(awk "BEGIN {printf \"%.1f\", ($avail_hrs/$total_hrs)*100}")
 
-  echo "PI: $PI"
-  printf "  Free-tier allocation\n"
-  printf "  PI total:     %'12.2f\n" "$total_hrs"
-  printf "  PI running:   %'12.2f --> Service Units committed for completing running jobs\n" "$run_hrs"
-  printf "  PI used:      %'12.2f (%s%%)\n" "$used_hrs" "$used_pct"
-  printf "  PI available: %'12.2f (%s%%) --> Service Units shared among all PI's accounts\n" "$avail_hrs" "$avail_pct"
-  echo
+    echo "  PI: $PI"
+    printf "    Free-tier allocation\n"
+    printf "    PI total:     %'12.2f\n" "$total_hrs"
+    printf "    PI running:   %'12.2f --> Service Units committed for completing running jobs\n" "$run_hrs"
+    printf "    PI used:      %'12.2f (%s%%)\n" "$used_hrs" "$used_pct"
+    printf "    PI available: %'12.2f (%s%%) --> Service Units shared among all PI's accounts\n" "$avail_hrs" "$avail_pct"
+    echo
 
-  children=$(sacctmgr show assoc format=account,parentname,grpsubmit -np cluster=tinkercliffs | awk -F'|' -v parentname="__${PI}__" '$2 == parentname && $3 != 0 {print $1}')
+    children=$(sacctmgr show assoc format=account,parentname,grpsubmit -np cluster=tinkercliffs | awk -F'|' -v parentname="__${PI}__" '$2 == parentname && $3 != 0 {print $1}')
 
-  for ACCOUNT in $children; do
-    getAccountUsage "$ACCOUNT"
+    for ACCOUNT in $children; do
+        getAccountUsage "$ACCOUNT" $cluster
+        echo
+    done
     echo
   done
- 
 fi
