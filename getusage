@@ -129,17 +129,26 @@ getAccountUsage() {
   # Get users to exclude (those with '0' in the second field)
   local exclude_users=()
   while IFS='|' read -r user field2 _; do
-    if [[ "$user" == "" && "$field2" == "0" ]]; then
-      echo "ERROR: The account $ACCOUNT is not active"
-      return
-    elif [[ "$field2" == "0" ]]; then
-      exclude_users+=("$user")
+    if [[ -z "$USER" ]]; then
+      # Original logic
+      if [[ "$user" == "" && "$field2" == "0" ]]; then
+        echo "ERROR: The account $ACCOUNT is not active"
+        return
+      elif [[ "$field2" == "0" ]]; then
+        exclude_users+=("$user")
+      fi
+    else
+      # Exclude everyone except $USER
+      if [[ "$user" != "$USER" ]]; then
+        exclude_users+=("$user")
+      fi
     fi
   done < <(sacctmgr show assoc where account=$ACCOUNT format=user,grpsubmi -np | sort | uniq)
 
+  # Optional: build a map of excluded users (safe against empty values)
   declare -A exclude_map
   for u in "${exclude_users[@]}"; do
-    exclude_map["$u"]=1
+    [[ -n "$u" ]] && exclude_map["$u"]=1
   done
 
   local sshare_output
