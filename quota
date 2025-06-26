@@ -147,23 +147,16 @@ print_alloc_quota() {
 		local cluster=$(echo $line | awk -F\| '{print $3}');
 		local quota=$(echo $line | awk -F\| '{print $4}');
 		local left=$(echo $line | awk -F\| '{print $5}');
-		local end=$(echo $line | awk -F\| '{print $6}');
+		local status=$(echo $line | awk -F\| '{print $6}');
 
 		local colors=('' '' '' '' '' '' '')
 
 		local note="";
-		local end_epoch=0;
 		local now_epoch=0;
-		local six_mo_ago_epoch=0;
-		if [[ "$end" && "$end" != "Infinity" ]]; then
-			end_epoch=$(date -d "$end" +%s)
-			now_epoch=$(date +%s)
-			six_mo_ago_epoch=$(( now_epoch - 15780000 ));
-		fi
-		if [ "$end_epoch" -lt "$six_mo_ago_epoch" ]; then
+		if [ "$status" == "Revoked" ]; then
 			continue;
 		fi
-		if [ "$now_epoch" -gt "$end_epoch" ]; then
+		if [ "$status" == "Expired" ]; then
 			note+="Allocation has expired. ";
 			colors[1]=${YELLOW};
 			colors[2]=${YELLOW};
@@ -179,22 +172,24 @@ print_alloc_quota() {
 		fi
 
 		printf "$(print_padding colors[@] 'header')" \
-			"$pid" "$alloc" "$cluster" "$quota" "$left" "$end" "$note";
+			"$pid" "$alloc" "$cluster" "$quota" "$left" "$status" "$note";
 
 	done < <(cat "$alloc_cache" | python <( echo '
 from __future__ import print_function;
 import sys, json;
 for (k, v) in json.load(sys.stdin).items(): 
 	i=0;
+	status = ""
+	if "status" in v:
+		status = v["status"];
 	for f in v["funds"]: 
 		alloc = f["allocated"];
 		remain = f["remaining"];
-		end = f["end"];
 
 		if i == 0: 
-			print("'$user'"+"|"+k+"|"+f["cluster"]+"|"+alloc+"|"+remain+"|"+end+"|")
+			print("'$user'"+"|"+k+"|"+f["cluster"]+"|"+alloc+"|"+remain+"|"+status+"|")
 		else:
-			print("||"+f["cluster"]+"|" + alloc+"|"+remain+"|"+end+"|");
+			print("||"+f["cluster"]+"|" + alloc+"|"+remain+"|"+status+"|");
 		i += 1;
 '))
 
@@ -283,7 +278,7 @@ print_storage_header() {
 print_alloc_header() {
 	echo;
 	printf "$(print_padding HEADER_COLORS[@] 'header')" \
-		"USER" "ALLOCATION" "CLUSTER" "QUOTA (hrs)" "LEFT (hrs)" "EXPIRES" "NOTE";
+		"USER" "ALLOCATION" "CLUSTER" "QUOTA (hrs)" "LEFT (hrs)" "STATUS" "NOTE";
 }
 
 print_row() {
