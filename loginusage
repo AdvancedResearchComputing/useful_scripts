@@ -1,6 +1,17 @@
-# accept username as first input argument. If no input, then use current user.
-${_user_}=`id -u $1`
+# accept username as first input argument. If no input provided, then use current user is selected by "id"
+# echo $1
+_user_=`id -u $1`
+echo "Showing login usage for user=$_user_"
+sleep 1
 
 # validate that we have a valid uid to work with, but supress all output
 id -un ${_user_} >/dev/null 2>&1
-[[ $? ]] && systemd-cgtop user.slice/user-`id -u`.slice || echo "unable to process username - quitting" 
+
+# if "id" was successful, run systemd-cgtop to show the user's control group slice on the login node, otherwise quit
+[[ $? ]] && systemd-cgtop -n 5 -d 1 user.slice/user-${_user_}.slice || echo "unable to process username - quitting"
+
+# pad with a line between cg output and ps
+echo
+
+# Show current processes owned by the user and relevant metadata
+ps -U ${_user_} -o user,pid,pcpu,state,thcount,stime,etime,cputime,command
