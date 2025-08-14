@@ -1,0 +1,32 @@
+show_usage() {
+  echo "Usage:"
+  echo "  getjobutilurl <slurm_job_id>"
+  exit 0
+}
+
+JID=$1
+NL=$(sacct -j $JID -X -nP -o nodelist 2>/dev/null)
+#[[ $? = 0 ]] && show_usage
+JS=$(sacct -j $JID -X -nP -o start)
+JE=$(sacct -j $JID -X -nP -o end)
+
+if [[ $# -ne 1 ]]; then
+  show_usage
+fi
+
+for NN in $(scontrol show hostnames $NL)
+do
+  if [[ $SYSNAME = "tinkercliffs" ]]
+  then
+    DS="prometheus-tc"
+  elif [[ $SYSNAME = "falcon" ]]
+  then
+    DS="prometheus-falcon"
+  else
+    DS="prometheus-owl"
+  fi
+
+  printf "$NN: "
+  echo "https://dashboard.arc.vt.edu/d/cej08t3a14lq8c/arc-cluster-node-efficiency?var-interval=1m&orgId=1&from=${JS}.000Z&to=${JE}.000Z&timezone=browser&var-datasource=${DS}&var-hostname=${NN}"
+
+done
