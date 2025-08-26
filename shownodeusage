@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+
+# Usage: ./shownodeusage.sh <nodename>
+
+if [ $# -ne 1 ]; then
+    echo "Usage: $0 <nodename>"
+    exit 1
+fi
+
+NODE="$1"
+
+{
+    # 1) Print header (tab‐separated).  'column -t' will align later.
+    printf "JobID\tUser\tElapsed\tCPUs\tMem(GB)\tGPUs\n"
+
+    # 2) For each job currently on $NODE, gather scontrol details once.
+    for JOBID in $(squeue -h -w "$NODE" -o "%i"); do
+        INFO=$(scontrol show job -d "$JOBID")
+
+        # --- USERNAME ---
+        # e.g. UserId=adanato(8649771)  →  “adanato”
+        USERNAME=$(echo "$INFO" \
+            | grep -oP 'UserId=\K[^()]+' \
+            || printf "UNKNOWN")
+
+        # --- ELAPSED (RunTime) ---
+        # e.g. RunTime=1-03:54:36  →  “1-03:54:36”
+        ELAPSED=$(echo "$INFO" \
+            | grep -oP 'RunTime=\K[^ ]+' \
+            || printf "N/A")
+
+        # --- ALLOCTRES STRING ---
+        # Grab everything after “AllocTRES=” up to the next space.
+        # e.g. “cpu=52,mem=834912M,node=1,billing=202,gres/gpu=1,gres/gpu:a100=1”
+        TRES_ALLOC=$(echo "$INFO" \
+            | grep -oP 'AllocTRES=\K[^ ]+' \
+            || printf "-")
+
+        # If we didn’t find AllocTRES=…, default both to “-”
+        if [ "$TRES_ALLOC" = "-" ]; then
+            CPUS="-"
+            MEM_GB="-"
+        else
+            # --- CPUS from “cpu=<N>” ---
+            # split TRES_ALLOC on commas, find the part that starts with “cpu=”
+            CPUS=$(echo "$TRES_ALLOC" \
+                | awk -F, '{
+                    for (i=1; i<=NF; i++) {
+                        if ($i ~ /^cpu=/) {
+                            sub(/^cpu=/, "", $i)
+                            print $i
+                            exit
+                        }
+                    }
+                }')
+            [ -z "$CPUS" ] && CPUS="-"
+
+            # --- MEM from “mem=<X>[MGT]” and convert to GiB (one decimal) ---
+            MEM_RAW=$(echo "$TRES_ALLOC" \
+                | awk -F, '{
+                    for (i=1; i<=NF; i++) {
+                        if ($i ~ /^mem=/) {
+                            sub(/^mem=/, "", $i)   # e.g. “834912M” or “15G” or "2T"
+                            print $i
+                            exit
+                        }
+                    }
+                }')
+            if [ -n "$MEM_RAW" ]; then
+                # Determine unit (last character)
+                UNIT=${MEM_RAW: -1}
+                NUM=${MEM_RAW%?}  # all but last char
+                case "$UNIT" in
+                    M)
+                        # MB → GB
+                        MEM_GB=$(awk "BEGIN { printf \"%.1f\", $NUM/1024 }")
+                        ;;
+                    G)
+                        # Already in GB
+                        MEM_GB=$(awk "BEGIN { printf \"%.1f\", $NUM }")
+                        ;;
+                    T)
+                        # TB → GB
+                        MEM_GB=$(awk "BEGIN { printf \"%.1f\", $NUM * 1024 }")
+                        ;;
+                    *)
+                        # Unknown unit, just print raw
+                        MEM_GB="$MEM_RAW"
+                        ;;
+                esac
+            else
+                MEM_GB="-"
+            fi
+        fi
+
+        # --- GPU IDX LIST ---
+        # We look for any token in INFO matching “GRES=…(IDX:<something>)”
+        # and strip to just <something>.
+        # If none found, we show “-”.
+        GPU_IDX=$(echo "$INFO" \
+            | awk '
+                {
+                  for (i=1; i<=NF; i++) {
+                    if ($i ~ /GRES=.*\(IDX:/) {
+                      # Remove everything through “(IDX:”
+                      sub(/.*\(IDX:/, "", $i)
+                      # Remove trailing “)”
+                      sub(/\).*/, "", $i)
+                      print $i
+                      exit
+                    }
+                  }
+                }
+              ')
+        [ -z "$GPU_IDX" ] && GPU_IDX="-"
+
+        # Print one row (tab‐separated)
+        printf "%s\t%s\t%s\t%s\t%s\t%s\n" \
+            "$JOBID" "$USERNAME" "$ELAPSED" "$CPUS" "$MEM_GB" "$GPU_IDX"
+    done
+
+} | column -t
