@@ -94,56 +94,93 @@ NODE="$1"
         fi
 
         # --- GPU IDX for the requested node ---
-        # Find the Nodes=... line that applies to $NODE (supports single names and bracket ranges),
-        # then extract the IDX for that line.
-        GPU_IDX=$(echo "$INFO" | awk -v NODE="$NODE" '
-        BEGIN {
-            # split NODE into prefix and numeric suffix (if present)
-            if (match(NODE, /(.*?)([0-9]+)$/, m)) {
-                pref = m[1]; num = m[2];
-            } else { pref = NODE; num = ""; }
-        }
-        # consider any line that begins with optional space(s) then "Nodes="
-        /^[ \t]*Nodes=/ {
-            line = $0
-            # get the Nodes= value
-            if (match(line, /Nodes=([^ ]+)/, a)) {
-                nodestr = a[1]
-                ok = 0
-                # exact match
-                if (nodestr == NODE) ok = 1
-                else {
-                    # if nodestr is like prefix[...] check whether num is inside
-                    if (match(nodestr, /^([A-Za-z0-9_.-]+)\[([^\]]+)\]/, b)) {
-                        p = b[1]; inside = b[2]
-                        if (p == pref) {
-                            # split comma-separated parts inside brackets
-                            n = split(inside, parts, ",")
-                            for (i = 1; i <= n; i++) {
-                                part = parts[i]
-                                if (match(part, /^([0-9]+)-([0-9]+)$/, r)) {
-                                    low = r[1] + 0; high = r[2] + 0
-                                    if ((num + 0) >= low && (num + 0) <= high) { ok = 1; break }
-                                } else if (part == num) { ok = 1; break }
-                            }
+        # Use bash to parse the scontrol output, expand bracketed node ranges
+        # (preserving zero padding), and build a node->IDX(s) map.
+        GPU_IDX="-"
+        declare -A NODE_IDX_MAP=()
+
+        while IFS= read -r ln; do
+            # look for the Nodes= token (value ends at next whitespace)
+            if [[ $ln =~ Nodes=([^[:space:]]+) ]]; then
+                nodestr="${BASH_REMATCH[1]}"
+
+                # collect all IDX values on this same line (there can be multiple)
+                idxs_list=()
+                # use awk to print each IDX value on its own line, then read them into idxs_list
+                while IFS= read -r idx; do
+                    [ -n "$idx" ] && idxs_list+=("$idx")
+                done < <(
+                    echo "$ln" \
+                    | awk '{
+                        s = $0
+                        while (match(s, /\(IDX:([^)]*)\)/, m)) {
+                            print m[1]
+                            s = substr(s, RSTART + RLENGTH)
                         }
-                    }
-                    # as a last resort, if the nodestr contains NODE as substring accept it
-                    if (!ok && index(nodestr, NODE)) ok = 1
-                }
+                    }'
+                )
 
-                if (ok) {
-                    if (match(line, /GRES=[^ ]*\(IDX:([^)]*)\)/, g)) {
-                        print g[1]
-                        exit
-                    }
-                }
-            }
-        }
-        END { }
-        ')
+                # if no IDXs on this line, skip it
+                [ ${#idxs_list[@]} -eq 0 ] && continue
 
+                # join idxs with commas
+                idxs_join=$(IFS=,; echo "${idxs_list[*]}")
+
+                # expand bracketed nodes e.g. prefix[005-006,010]
+                if [[ $nodestr =~ ^([A-Za-z0-9_.-]+)\[([^\]]+)\]$ ]]; then
+                    prefix="${BASH_REMATCH[1]}"
+                    inside="${BASH_REMATCH[2]}"
+                    IFS=, read -r -a parts <<< "$inside"
+                    for part in "${parts[@]}"; do
+                        if [[ $part =~ ^([0-9]+)-([0-9]+)$ ]]; then
+                            low=${BASH_REMATCH[1]}; high=${BASH_REMATCH[2]}
+                            width=${#BASH_REMATCH[1]}
+                            for ((n=low; n<=high; n++)); do
+                                node=$(printf "%s%0*d" "$prefix" "$width" "$n")
+                                if [ -z "${NODE_IDX_MAP[$node]}" ]; then
+                                    NODE_IDX_MAP[$node]="$idxs_join"
+                                else
+                                    NODE_IDX_MAP[$node]="${NODE_IDX_MAP[$node]},$idxs_join"
+                                fi
+                            done
+                        elif [[ $part =~ ^[0-9]+$ ]]; then
+                            width=${#part}
+                            node=$(printf "%s%0*d" "$prefix" "$width" "$part")
+                            if [ -z "${NODE_IDX_MAP[$node]}" ]; then
+                                NODE_IDX_MAP[$node]="$idxs_join"
+                            else
+                                NODE_IDX_MAP[$node]="${NODE_IDX_MAP[$node]},$idxs_join"
+                            fi
+                        else
+                            # unexpected token; add literal (rare)
+                            node="${prefix}[${part}]"
+                            if [ -z "${NODE_IDX_MAP[$node]}" ]; then
+                                NODE_IDX_MAP[$node]="$idxs_join"
+                            else
+                                NODE_IDX_MAP[$node]="${NODE_IDX_MAP[$node]},$idxs_join"
+                            fi
+                        fi
+                    done
+                else
+                    # not bracketed: maybe a single name or comma-separated list
+                    IFS=, read -r -a names <<< "$nodestr"
+                    for node in "${names[@]}"; do
+                        node="${node}"   # preserve literal
+                        if [ -z "${NODE_IDX_MAP[$node]}" ]; then
+                            NODE_IDX_MAP[$node]="$idxs_join"
+                        else
+                            NODE_IDX_MAP[$node]="${NODE_IDX_MAP[$node]},$idxs_join"
+                        fi
+                    done
+                fi
+            fi
+        done <<< "$INFO"
+
+        # lookup
+        GPU_IDX="${NODE_IDX_MAP[$NODE]:-}"
         [ -z "$GPU_IDX" ] && GPU_IDX="-"
+
+
 
         # Print one row (tab‐separated)
         printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
