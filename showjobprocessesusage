@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Usage: showjobprocessesusage <SlurmJobID>
+
+set -euo pipefail
+
+if [ $# -ne 1 ]; then
+  echo "Usage: $0 <SlurmJobID>"
+  exit 1
+fi
+
+jobid="$1"
+
+# Get scontrol output and extract PIDs (skip header and any '-1' or non-numeric values)
+mapfile -t pids < <( scontrol listpids "$jobid" 2>/dev/null \
+                      | awk 'NR>1 {print $1}' \
+                      | grep -E '^[0-9]+$' || true )
+
+if [ "${#pids[@]}" -eq 0 ]; then
+  echo "No numeric PIDs found for job $jobid (scontrol returned none or scontrol failed)."
+  exit 0
+fi
+
+# Map GPU UUID to GPU index (1:1)
+declare -A UUID_TO_INDEX
+
+while IFS=',' read -r index uuid; do
+    index=$(echo "$index" | xargs)   # trim spaces
+    uuid=$(echo "$uuid" | xargs)
+    UUID_TO_INDEX["$uuid"]="$index"
+done < <(nvidia-smi --query-gpu=index,uuid --format=csv,noheader,nounits)
+
+# Map PID to list of GPU UUIDs (1:N even though most likely 1:1)
+declare -A PID_TO_UUID
+
+while IFS=',' read -r uuid pid; do
+    uuid=$(echo "$uuid" | xargs)
+    pid=$(echo "$pid" | xargs)
+
+    # Append uuid to existing list for this pid
+    if [[ -n "${PID_TO_UUID[$pid]+x}" ]]; then
+        PID_TO_UUID["$pid"]+=$' '"$uuid"
+    else
+        PID_TO_UUID["$pid"]="$uuid"
+    fi
+
+done < <(nvidia-smi --query-compute-apps=gpu_uuid,pid --format=csv,noheader,nounits)
+
+# Map PIDs to UUIDs to IDX
+#for pid in "${!PID_TO_UUID[@]}"; do
+#    for uuid in ${PID_TO_UUID[$pid]}; do
+#        echo "PID $pid has GPU $uuid and IDX ${UUID_TO_INDEX[$uuid]}"
+#    done
+#done
+
+# Map PIDs to IDX
+get_gpu_idxs_for_pid() {
+    local pid=$1
+    # if PID not in map, return empty
+    if [[ -z "${PID_TO_UUID[$pid]+x}" ]]; then
+        echo ""
+        return
+    fi
+
+    local uuids=(${PID_TO_UUID[$pid]})
+    local idxs=()
+
+    for uuid in "${uuids[@]}"; do
+        idxs+=("${UUID_TO_INDEX[$uuid]}")
+    done
+
+    (IFS=,; echo "${idxs[*]}")
+}
+
+#for pid in "${!PID_TO_UUID[@]}"; do
+#    echo "PID $pid uses GPU indices: $(get_gpu_idxs_for_pid "$pid")"
+#done
+
+# Print header
+#printf "%-8s %6s %10s %15s %s\n" "PID" "%CPU" "MEM(MB)" "GPUs" "CMD"
+#printf "%-8s %6s %10s %15s %s\n" "--------" "------" "---------" "--------------" "----"
+
+# For each PID, fetch %CPU, RSS (KB) and full command
+for pid in "${pids[@]}"; do
+  # if process does not exist anymore, ps will produce empty output
+  # use ps to get %cpu, rss (KB), and args
+  psline=$(ps -p "$pid" -o %cpu=,rss=,args= 2>/dev/null || true)
+
+  if [ -z "${psline// /}" ]; then
+    # either ps failed (no such pid) or empty output
+    continue
+  fi
+
+  # Trim leading whitespace
+  psline="$(echo "$psline" | sed -E 's/^[[:space:]]+//')"
+
+  # Extract first two whitespace-separated fields (%CPU and RSS) and the remainder as CMD
+  cpu="$(awk '{print $1}' <<<"$psline")"
+  rss="$(awk '{print $2}' <<<"$psline")"
+  # remove the leading "%CPU RSS " from the line to get the command (handles spaces in command)
+  cmd="$(printf '%s\n' "$psline" | sed -E "s/^[[:space:]]*[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]*//")"
+
+  # Convert RSS (KB) to MB with 2 decimal places. If rss is non-numeric, show N/A
+  if [[ "$rss" =~ ^[0-9]+$ ]]; then
+    mem_mb=$(awk -v kb="$rss" 'BEGIN{ printf "%.2f", kb/1024 }')
+  else
+    mem_mb="N/A"
+  fi
+
+  # Filter: skip commands containing slurmstepd or sleep
+  #if [[ "$cmd" =~ (slurmstepd:|sshd:|sleep[[:space:]]+100000000|job[0-9]+/slurm_script) ]]; then
+  #  continue
+  #fi
+
+  # Print row
+  #printf "%-8s %6s %10s %15s %s\n" \
+  printf "%s|%s|%s|%s|%.100s\n" \
+    "$pid" "$cpu" "$mem_mb" "$(get_gpu_idxs_for_pid "$pid")" "$cmd"
+done
