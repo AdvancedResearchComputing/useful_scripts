@@ -440,8 +440,8 @@ for i in "${!NODE_NAME[@]}"; do
 
   total_cpu="${NODE_TOTAL_CPU[$node]:-0}"
   total_mem="${NODE_TOTAL_MEM[$node]:-0}"
-  cpu_util_pct="$(echo "$total_cpu/$cpus" | bc)"
-  mem_util_pct="$(echo "$total_mem*100/$mem_val" | bc)"
+  cpu_util_pct="$(awk "BEGIN {print $total_cpu/$cpus}")"
+  mem_util_pct="$(awk "BEGIN {print $total_mem*100/$mem_val}")"
 
   echo
   printf "    %13s  %12s  %16s  %12s\n" "CPU UTIL" "CPU UTIL (%)" "MEM UTIL (MB)" "MEM UTIL (%)"
@@ -490,14 +490,14 @@ for i in "${!NODE_NAME[@]}"; do
   warning_triggered=0  # flag to track if any warning was printed
 
   # --- CPU warning ---
-  if (( cpu_util_pct < 10 )); then
-      echo -e "    ${RED}WARNING${NC}: ${cpus} CPU(s) allocated but utilization is low (${cpu_util_pct}%)"
+  if awk "BEGIN {exit !($cpu_util_pct < 10)}"; then      
+      printf "    ${RED}WARNING${NC}: %s CPU(s) allocated but utilization is low (%.2f%%)\n" "$cpus" "$cpu_util_pct"
       warning_triggered=1
   fi
 
   # --- Memory warning ---
-  if (( mem_util_pct < 10 )); then
-      echo -e "    ${RED}WARNING${NC}: $(printf "%.0f" "$mem_val") MB allocated but utilization is low (${mem_util_pct}%)"
+  if awk "BEGIN {exit !($mem_util_pct < 10)}"; then      
+      printf "    ${RED}WARNING${NC}: %.0f MB allocated but utilization is low (%.2f%%)\n" "$mem_val" "$mem_util_pct"
       warning_triggered=1
   fi
 
