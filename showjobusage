@@ -176,6 +176,8 @@ reason=$(_first_match 's/.*Reason=\([^ ]*\).*/\1/p')
 reason=${reason:-}
 jobstate=$(_first_match 's/.*JobState=\([^ ]*\).*/\1/p')
 jobstate=${jobstate:-}
+jobname=$(_first_match 's/.*JobName=\([^ ]*\).*/\1/p')
+jobname=${jobname:-}
 runtime=$(_first_match 's/.*RunTime=\([^ ]*\).*/\1/p')
 runtime=${runtime:-}
 
@@ -303,7 +305,7 @@ for node_name in "${NODE_NAME[@]}"; do
     NODE_TOTAL_MEM["$node_name"]="0"
 
     # run remote command (if it fails, we continue with empty output)
-    output=$(timeout 60s ssh "$node_name" "./showjobprocessesusage $jobid" 2>/dev/null || true)
+    output=$(timeout 60s ssh "$node_name" "showjobprocessesusage $jobid" 2>/dev/null || true)
 
     total_cpu=0
     total_mem=0
@@ -364,6 +366,7 @@ done
 count=${#NODE_NAME[@]}
 cat <<EOF
 JOBID:    $jobid
+JOBNAME:  $jobname
 USER:     ${user:-N/A}
 ACCOUNT:  ${account:-N/A}
 JOBSTATE: ${jobstate:-N/A} $([[ ${jobstate} == PENDING ]] && echo "(${reason})")
