@@ -399,9 +399,11 @@ for i in "${!NODE_NAME[@]}"; do
   # get pids string and normalize whitespace
   pids="${NODE_PROCESSES[$node]:-}"
   pids="$(printf '%s' "$pids" | awk '{$1=$1;print}')"
+  warning_nopids=0
 
   if [ -z "$pids" ]; then
     echo "    (no processes found on node)"
+    warning_nopids=1
   else
     # collect seen GPUs (unique) while we walk the pids
     declare -A SEEN_GPUS=()
@@ -489,7 +491,13 @@ for i in "${!NODE_NAME[@]}"; do
 
   warning_triggered=0  # flag to track if any warning was printed
 
-  # --- CPU warning ---
+  # --- CPU warning (no processes) ---
+  if (( warning_nopids )); then
+      printf "    ${RED}WARNING${NC}: No processes running on the node\n"
+      warning_triggered=1
+  fi
+
+  # --- CPU warning (low utilization) ---
   if awk "BEGIN {exit !($cpu_util_pct < 10)}"; then      
       printf "    ${RED}WARNING${NC}: %s CPU(s) allocated but utilization is low (%.2f%%)\n" "$cpus" "$cpu_util_pct"
       warning_triggered=1
