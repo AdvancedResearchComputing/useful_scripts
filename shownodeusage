@@ -1,190 +1,547 @@
 #!/usr/bin/env bash
 
-# Usage: ./shownodeusage.sh <nodename>
+# Usage: ./shownodeusage.sh <nodename> [--hide-processes]
 
-if [ $# -ne 1 ]; then
-    echo "Usage: $0 <nodename>"
-    exit 1
+hideprocesses=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --hide-processes)
+            hideprocesses=true
+            shift
+            ;;
+        *)
+            if [ -z "$nodename" ]; then
+                nodename="$1"
+                shift               
+            else
+                echo "Usage: $0 <node> [--hide-processes]" >&2
+                exit 2
+            fi
+            ;;
+    esac
+done
+
+if [ -z "$nodename" ]; then
+    echo "Usage: $0 <node> [--hide-processes]" >&2
+    exit 2
 fi
 
-NODE="$1"
+# ANSI color code for red
+RED='\033[0;31m'
+NC='\033[0m'  # No Color
 
-{
-    # 1) Print header (tab‐separated).  'column -t' will align later.
-    printf "JobID\tUser\tElapsed\tTotal-CPUs\tTotal-Mem(GB)\tTotal-GPUs\tGPUs-IDX-on-this-node\n"
+# count CPU ids expression like "4-7,80-83" -> returns integer count
+count_cpu_ids() {
+  local s="$1"
+  [ -z "$s" ] && { echo 0; return; }
+  IFS=',' read -ra parts <<< "$s"
+  local total=0
+  for p in "${parts[@]}"; do
+    if [[ "$p" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+      local a=${BASH_REMATCH[1]} b=${BASH_REMATCH[2]}
+      # inclusive count
+      (( total += b - a + 1 ))
+    elif [[ "$p" =~ ^[0-9]+$ ]]; then
+      (( total += 1 ))
+    else
+      # ignore unknown token but keep going
+      :
+    fi
+  done
+  echo "$total"
+}
 
-    # 2) For each job currently on $NODE, gather scontrol details once.
-    for JOBID in $(squeue -h -w "$NODE" -o "%i"); do
-        INFO=$(scontrol show job -d "$JOBID")
+# expand IDX token like "0,1,3" or "5-6" -> "0,1,3" or "5,6"
+expand_idx_list() {
+  local s="$1"
+  [ -z "$s" ] && { echo ""; return; }
+  IFS=',' read -ra parts <<< "$s"
+  local -a out=()
+  for p in "${parts[@]}"; do
+    if [[ "$p" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+      local a=${BASH_REMATCH[1]} b=${BASH_REMATCH[2]}
+      local i
+      for ((i=a;i<=b;i++)); do
+        out+=("$i")
+      done
+    elif [[ "$p" =~ ^[0-9]+$ ]]; then
+      out+=("$p")
+    fi
+  done
+  # join with commas
+  local IFS=,
+  echo "${out[*]}"
+}
 
-        # --- USERNAME ---
-        USERNAME=$(echo "$INFO" \
-            | grep -oP 'UserId=\K[^()]+' \
-            || printf "UNKNOWN")
+# expand node expressions like
+#   "tc-dgx[005-006]"
+#   "tc-dgx[005,007]"
+#   "tc-dgx003"
+#   "tc-dgx010,tc-gpu002,tc-dgx[005-006]"
+#   "tc-dgx010,tc-gpu002,tc-dgx[005-006],tc-dgx[003,006]"
+expand_node_expr() {
+  local expr="$1"
+  local -a out=()
 
-        # --- ELAPSED (RunTime) ---
-        ELAPSED=$(echo "$INFO" \
-            | grep -oP 'RunTime=\K[^ ]+' \
-            || printf "N/A")
+  # --- split by top-level commas (ignore commas inside [...]) ---
+  local parts=()
+  local buf=""
+  local depth=0
+  local c
+  for ((i=0; i<${#expr}; i++)); do
+    c="${expr:i:1}"
+    if [[ "$c" == "[" ]]; then
+      depth=$((depth+1))
+      buf+="$c"
+    elif [[ "$c" == "]" ]]; then
+      depth=$((depth-1))
+      buf+="$c"
+    elif [[ "$c" == "," && $depth -eq 0 ]]; then
+      parts+=("$buf")
+      buf=""
+    else
+      buf+="$c"
+    fi
+  done
+  [[ -n "$buf" ]] && parts+=("$buf")
 
-        # --- ALLOCTRES STRING ---
-        TRES_ALLOC=$(echo "$INFO" \
-            | grep -oP 'AllocTRES=\K[^ ]+' \
-            || printf "-")
+  # --- expand each part ---
+  for part in "${parts[@]}"; do
+    if [[ "$part" =~ ^([^\[]+)\[([^\]]+)\](.*)$ ]]; then
+      local prefix="${BASH_REMATCH[1]}"
+      local inside="${BASH_REMATCH[2]}"
+      local suffix="${BASH_REMATCH[3]}"
 
-        if [ "$TRES_ALLOC" = "-" ]; then
-            CPUS="-"
-            MEM_GB="-"
-            GPUS="-"
+      IFS=',' read -ra items <<< "$inside"
+      for item in "${items[@]}"; do
+        if [[ "$item" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+          local a="${BASH_REMATCH[1]}"
+          local b="${BASH_REMATCH[2]}"
+          local width=${#a}
+          for ((i=10#$a; i<=10#$b; i++)); do
+            out+=( "$(printf "%s%0${width}d%s" "$prefix" "$i" "$suffix")" )
+          done
+        elif [[ "$item" =~ ^[0-9]+$ ]]; then
+          local width=${#item}
+          out+=( "$(printf "%s%0${width}d%s" "$prefix" "$((10#$item))" "$suffix")" )
         else
-            CPUS=$(echo "$TRES_ALLOC" \
-                | awk -F, '{
-                    for (i=1; i<=NF; i++) {
-                        if ($i ~ /^cpu=/) {
-                            sub(/^cpu=/, "", $i)
-                            print $i
-                            exit
-                        }
-                    }
-                }')
-            [ -z "$CPUS" ] && CPUS="-"
+          out+=( "${prefix}${item}${suffix}" )
+        fi
+      done
+    else
+      out+=( "$part" )
+    fi
+  done
 
-            GPUS=$(echo "$TRES_ALLOC" \
-                | awk -F, '{
-                    for (i=1; i<=NF; i++) {
-                        if ($i ~ /^gres\/gpu=/) {
-                            sub(/^gres\/gpu=/, "", $i)
-                            print $i
-                            exit
-                        }
-                    }
-                }')
-            [ -z "$GPUS" ] && GPUS="-"
+  printf '%s\n' "${out[@]}"
+}
 
-            MEM_RAW=$(echo "$TRES_ALLOC" \
-                | awk -F, '{
-                    for (i=1; i<=NF; i++) {
-                        if ($i ~ /^mem=/) {
-                            sub(/^mem=/, "", $i)
-                            print $i
-                            exit
-                        }
-                    }
-                }')
-            if [ -n "$MEM_RAW" ]; then
-                UNIT=${MEM_RAW: -1}
-                NUM=${MEM_RAW%?}
-                case "$UNIT" in
-                    M)
-                        MEM_GB=$(awk "BEGIN { printf \"%.1f\", $NUM/1024 }")
-                        ;;
-                    G)
-                        MEM_GB=$(awk "BEGIN { printf \"%.1f\", $NUM }")
-                        ;;
-                    T)
-                        MEM_GB=$(awk "BEGIN { printf \"%.1f\", $NUM * 1024 }")
-                        ;;
-                    *)
-                        MEM_GB="$MEM_RAW"
-                        ;;
-                esac
-            else
-                MEM_GB="-"
-            fi
+for jobid in $(squeue -h -w "$nodename" -o "%i"); do
+    if ! raw_output=$(scontrol show job "$jobid" -d 2>/dev/null); then
+        echo "Error: scontrol failed for job $jobid" >&2
+        exit 3
+    fi
+
+    _first_match() {
+    # param: sed expression to print the capturing group
+    # usage _first_match 's/.*UserId=\([^ (]*\).*/\1/p'
+    printf '%s\n' "$raw_output" | sed -n "$1" | head -n1
+    }
+
+    user=$(_first_match 's/.*UserId=\([^ (]*\).*/\1/p')
+    user=${user:-}
+    account=$(_first_match 's/.*Account=\([^ ]*\).*/\1/p')
+    account=${account:-}
+    jobname=$(_first_match 's/.*JobName=\([^ ]*\).*/\1/p')
+    jobname=${jobname:-}
+    runtime=$(_first_match 's/.*RunTime=\([^ ]*\).*/\1/p')
+    runtime=${runtime:-}
+
+    tres_line=$(_first_match 's/.*AllocTRES=\(.*\)/\1/p')
+    if [ -z "$tres_line" ]; then
+    tres_line=$(_first_match 's/.*ReqTRES=\(.*\)/\1/p')
+    fi
+    tres_line=${tres_line:-}
+
+    nodes_total=$(printf '%s\n' "$tres_line" | sed -n 's/.*node=\([0-9]*\).*/\1/p')
+    nodes_total=${nodes_total:-0}
+    cpus_total=$(printf '%s\n' "$tres_line" | sed -n 's/.*cpu=\([0-9]*\).*/\1/p')
+    cpus_total=${cpus_total:-0}
+    mem_str=$(printf '%s\n' "$tres_line" | sed -n 's/.*mem=\([0-9.]*[KkMmGgTt]\?\).*/\1/p' | head -n1)
+    if [ -z "$mem_str" ]; then
+    mem_mb=0
+    else
+    mem_mb=$(awk -v mem="$mem_str" 'BEGIN{
+        if(mem==""){print 0; exit}
+        u=substr(mem,length(mem),1)
+        if(u ~ /[0-9]/) { num=mem; unit="" } else { num=substr(mem,1,length(mem)-1); unit=toupper(u) }
+        if(unit=="G"){ printf("%.0f", num * 1024) }
+        else if(unit=="T"){ printf("%.0f", num * 1024 * 1024) }
+        else if(unit=="K"){ printf("%.0f", num / 1024) }
+        else { printf("%.0f", num) }
+    }')
+    fi
+    gpus_total=$(printf '%s\n' "$tres_line" | sed -n 's/.*gres\/gpu=\([0-9]*\).*/\1/p' | head -n1)
+    if [ -z "$gpus_total" ]; then
+    gpus_total=$(printf '%s\n' "$tres_line" | sed -n 's/.*gres\/gpu:[^=]*=\([0-9]*\).*/\1/p' | head -n1)
+    fi
+    gpus_total=${gpus_total:-0}
+
+    # ---------- parse Nodes= lines and build arrays ----------
+
+    declare -a NODE_NAME=()
+    declare -a NODE_CPUS=()
+    declare -a NODE_MEM=()
+    declare -A NODE_GPUS=()
+    declare -A NODE_GPU_IDX=()
+    declare -A NODE_PROCESSES=()
+
+    # per-process info keyed by "node|pid"
+    declare -A PROC_CPU=()
+    declare -A PROC_MEM=()
+    declare -A PROC_GPUS=()
+    declare -A PROC_CMD=()
+
+    # per-node totals
+    declare -A NODE_TOTAL_CPU=()
+    declare -A NODE_TOTAL_MEM=()
+    declare -A GPU_TOTAL_MEM=()
+    declare -A GPU_USED_MEM=()
+    declare -A GPU_UTIL=()
+
+    # iterate over lines
+    while IFS= read -r line; do
+    # trim leading spaces
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    if [[ "$trimmed" =~ ^Nodes= ]]; then
+        # extract the token after Nodes= up to space
+        node_expr=$(printf '%s\n' "$trimmed" | sed -n 's/.*Nodes=\([^ ]*\).*/\1/p')
+        # CPU_IDs may be missing
+        cpu_ids=$(printf '%s\n' "$trimmed" | sed -n 's/.*CPU_IDs=\([^ ]*\).*/\1/p' | head -n1 || true)
+        # Mem numeric (no unit) e.g. Mem=128448
+        mem_val=$(printf '%s\n' "$trimmed" | sed -n 's/.*Mem=\([0-9]*\).*/\1/p' | head -n1 || true)
+        # GRES token (could be like gpu:a100:1(IDX:1) or gpu:v100:2(IDX:5-6))
+        gres_token=$(printf '%s\n' "$trimmed" | sed -n 's/.*GRES=\([^ ]*\).*/\1/p' | head -n1 || true)
+
+        # compute CPU count
+        cpu_count=0
+        if [ -n "$cpu_ids" ]; then
+        cpu_count=$(count_cpu_ids "$cpu_ids")
         fi
 
-        # --- GPU IDX for the requested node ---
-        # Use bash to parse the scontrol output, expand bracketed node ranges
-        # (preserving zero padding), and build a node->IDX(s) map.
-        GPU_IDX="-"
-        declare -A NODE_IDX_MAP=()
+        # parse GPU count from gres_token (pattern gpu:<type>:<num>)
+        gpu_count=0
+        if [ -n "$gres_token" ] && [[ "$gres_token" == gpu:* ]]; then
+        # If multiple comma-separated resources are present, keep only the first chunk (the GPU one).
+        gpu_chunk="${gres_token%%,*}"        # e.g. "gpu:a100:1(IDX:1)"
 
-        while IFS= read -r ln; do
-            # look for the Nodes= token (value ends at next whitespace)
-            if [[ $ln =~ Nodes=([^[:space:]]+) ]]; then
-                nodestr="${BASH_REMATCH[1]}"
+        # Strip anything from the first '(' onward.
+        no_paren="${gpu_chunk%%(*}"          # e.g. "gpu:a100:1"
 
-                # collect all IDX values on this same line (there can be multiple)
-                idxs_list=()
-                # use awk to print each IDX value on its own line, then read them into idxs_list
-                while IFS= read -r idx; do
-                    [ -n "$idx" ] && idxs_list+=("$idx")
-                done < <(
-                    echo "$ln" \
-                    | awk '{
-                        s = $0
-                        while (match(s, /\(IDX:([^)]*)\)/, m)) {
-                            print m[1]
-                            s = substr(s, RSTART + RLENGTH)
-                        }
-                    }'
-                )
+        # Take everything after the last colon (the count).
+        maybe_num="${no_paren##*:}"          # e.g. "1"
 
-                # if no IDXs on this line, skip it
-                [ ${#idxs_list[@]} -eq 0 ] && continue
+        # Use it only if it’s all digits.
+        if [[ "$maybe_num" =~ ^[0-9]+$ ]]; then
+            gpu_count="$maybe_num"
+        fi
+        fi
 
-                # join idxs with commas
-                idxs_join=$(IFS=,; echo "${idxs_list[*]}")
+        # extract IDX contents if present: IDX:...
+        gpu_idx_raw=$(printf '%s\n' "$trimmed" | sed -n 's/.*IDX:\([^)]*\).*/\1/p' | head -n1 || true)
+        gpu_idx_expanded=""
+        if [ -n "$gpu_idx_raw" ]; then
+        gpu_idx_expanded=$(expand_idx_list "$gpu_idx_raw")
+        fi
 
-                # expand bracketed nodes e.g. prefix[005-006,010]
-                if [[ $nodestr =~ ^([A-Za-z0-9_.-]+)\[([^\]]+)\]$ ]]; then
-                    prefix="${BASH_REMATCH[1]}"
-                    inside="${BASH_REMATCH[2]}"
-                    IFS=, read -r -a parts <<< "$inside"
-                    for part in "${parts[@]}"; do
-                        if [[ $part =~ ^([0-9]+)-([0-9]+)$ ]]; then
-                            low=${BASH_REMATCH[1]}; high=${BASH_REMATCH[2]}
-                            width=${#BASH_REMATCH[1]}
-                            for ((n=low; n<=high; n++)); do
-                                node=$(printf "%s%0*d" "$prefix" "$width" "$n")
-                                if [ -z "${NODE_IDX_MAP[$node]}" ]; then
-                                    NODE_IDX_MAP[$node]="$idxs_join"
-                                else
-                                    NODE_IDX_MAP[$node]="${NODE_IDX_MAP[$node]},$idxs_join"
-                                fi
-                            done
-                        elif [[ $part =~ ^[0-9]+$ ]]; then
-                            width=${#part}
-                            node=$(printf "%s%0*d" "$prefix" "$width" "$part")
-                            if [ -z "${NODE_IDX_MAP[$node]}" ]; then
-                                NODE_IDX_MAP[$node]="$idxs_join"
-                            else
-                                NODE_IDX_MAP[$node]="${NODE_IDX_MAP[$node]},$idxs_join"
-                            fi
-                        else
-                            # unexpected token; add literal (rare)
-                            node="${prefix}[${part}]"
-                            if [ -z "${NODE_IDX_MAP[$node]}" ]; then
-                                NODE_IDX_MAP[$node]="$idxs_join"
-                            else
-                                NODE_IDX_MAP[$node]="${NODE_IDX_MAP[$node]},$idxs_join"
-                            fi
-                        fi
-                    done
-                else
-                    # not bracketed: maybe a single name or comma-separated list
-                    IFS=, read -r -a names <<< "$nodestr"
-                    for node in "${names[@]}"; do
-                        node="${node}"   # preserve literal
-                        if [ -z "${NODE_IDX_MAP[$node]}" ]; then
-                            NODE_IDX_MAP[$node]="$idxs_join"
-                        else
-                            NODE_IDX_MAP[$node]="${NODE_IDX_MAP[$node]},$idxs_join"
-                        fi
-                    done
-                fi
-            fi
-        done <<< "$INFO"
+        # expand node_expr into concrete node names (one or many)
+        while IFS= read -r node_name; do
+        [ -z "$node_name" ] && continue
+        # Trim node name of leading/trailing whitespace (portable)
+        node_name="$(printf '%s' "$node_name" | awk '{$1=$1;print}')"
+        [[ -n "$nodefilter" && "$node_name" != "$nodefilter" ]] && continue
 
-        # lookup
-        GPU_IDX="${NODE_IDX_MAP[$NODE]:-}"
-        [ -z "$GPU_IDX" ] && GPU_IDX="-"
+        if ! [[ "$node_name" == "$nodename" ]]; then
+            continue
+        fi
 
+        NODE_NAME+=("$node_name")
+        NODE_CPUS+=("$cpu_count")
+        NODE_MEM+=("${mem_val:-0}")      
+        NODE_GPUS["$node_name"]="$gpu_count"
+        NODE_GPU_IDX["$node_name"]="$gpu_idx_expanded"
+        done < <(expand_node_expr "$node_expr")
+    fi
+    done <<< "$raw_output"
 
+    # ---------- find processes information (trim node names, robust parsing) ----------
+    # make sure these associative arrays exist (declare these near the top of your script)
+    # declare -A NODE_PROCESSES PROC_CPU PROC_MEM PROC_GPUS PROC_CMD NODE_TOTAL_CPU NODE_TOTAL_MEM
 
-        # Print one row (tab‐separated)
-        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-            "$JOBID" "$USERNAME" "$ELAPSED" "$CPUS" "$MEM_GB" "$GPUS" "$GPU_IDX"
+    node_name=$nodename
+    # initialize node structures
+    NODE_PROCESSES["$node_name"]=""
+    NODE_TOTAL_CPU["$node_name"]="0"
+    NODE_TOTAL_MEM["$node_name"]="0"
+
+    # run remote command (if it fails, we continue with empty output)
+    output=""
+    if [[ -v NODE_GPUS[$node_name] && -n "${NODE_GPUS[$node_name]// }" ]]; then
+    output=$(timeout 60s ssh "$node_name" "showjobprocessesusage $jobid 1" 2>/dev/null || true)
+    else
+    output=$(timeout 60s ssh "$node_name" "showjobprocessesusage $jobid 0" 2>/dev/null || true)
+    fi
+    
+    total_cpu=0
+    total_mem=0
+
+    # parse each line into the 5 fields; the final field (cmd) may contain '|' so
+    # we only split on the first 4 '|' boundaries using read with IFS.
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+
+        # split into at most 5 fields on '|' (pid,cpu,mem,gpus,cmd)
+        # Note: using 'read' with IFS='|' will assign remaining text to the last var
+        IFS='|' read -r pid cpu mem gpus cmd <<< "$line"
+
+        # normalize pid and skip malformed lines
+        pid="$(printf '%s' "$pid" | awk '{$1=$1;print}')"  # trim
+        [[ -z "$pid" || "$pid" =~ [^0-9] ]] && continue
+
+        # append pid to this node (space-separated)
+        NODE_PROCESSES["$node_name"]+="${pid} "
+
+        # store per-process fields using the same trimmed node key
+        key="${node_name}|${pid}"
+        PROC_CPU["$key"]="${cpu:-0}"
+        PROC_MEM["$key"]="${mem:-0}"
+        PROC_GPUS["$key"]="${gpus:-}"
+        PROC_CMD["$key"]="${cmd:-}"
+
+        # accumulate totals (awk for float-safe addition)
+        total_cpu=$(awk -v a="$total_cpu" -v b="${cpu:-0}" 'BEGIN{printf "%.6f", a + b}')
+        total_mem=$(awk -v a="$total_mem" -v b="${mem:-0}" 'BEGIN{printf "%.6f", a + b}')
+    done <<< "$output"
+
+    NODE_TOTAL_CPU["$node_name"]="$total_cpu"
+    NODE_TOTAL_MEM["$node_name"]="$total_mem"
+
+    # === GPU stats collection ===
+    if [[ -v NODE_GPUS[$node_name] && -n "${NODE_GPUS[$node_name]// }" ]]; then
+        nvidia_out=$(timeout 60s ssh "$node_name" \
+            "nvidia-smi --query-gpu=index,memory.total,memory.used,utilization.gpu \
+            --format=csv,noheader,nounits" 2>/dev/null || true)
+
+        while IFS=',' read -r idx mem_total mem_used util; do
+            idx="$(printf '%s' "$idx" | awk '{$1=$1;print}')"
+            mem_total="$(printf '%s' "$mem_total" | awk '{$1=$1;print}')"
+            mem_used="$(printf '%s' "$mem_used" | awk '{$1=$1;print}')"
+            util="$(printf '%s' "$util" | awk '{$1=$1;print}')"
+
+            gpu_key="${node_name}|${idx}"
+            GPU_TOTAL_MEM["$gpu_key"]="$mem_total"
+            GPU_USED_MEM["$gpu_key"]="$mem_used"
+            GPU_UTIL["$gpu_key"]="$util"
+        done <<< "$nvidia_out"
+    fi
+
+# ---------- print a summary ----------
+count=${#NODE_NAME[@]}
+cat <<EOF
+JOBID:    $jobid
+JOBNAME:  $jobname
+USER:     ${user:-N/A}
+ACCOUNT:  ${account:-N/A}
+RUNTIME:  ${runtime:-N/A}
+NODES:    ${nodes_total:-0}
+CPUS:     ${cpus_total:-0}
+MEM (MB): ${mem_mb:-0}
+GPUS:     ${gpus_total:-0}
+EOF
+echo
+
+for i in "${!NODE_NAME[@]}"; do
+  node="${NODE_NAME[i]}"
+  cpus="${NODE_CPUS[i]:-0}"
+  mem_val="${NODE_MEM[i]:-0}"
+  gpus="${NODE_GPUS[$node]:0}"
+  gpu_idx="${NODE_GPU_IDX[$node]:-}"
+
+  # print table header
+  printf "%-20s %5s %10s %5s %15s\n" "NODE" "CPUS" "MEM (MB)" "GPUS" "GPU IDX (SLURM)"
+  printf "%-20s %5s %10s %5s %15s\n" "--------------------" "-----" "---------" "-----" "---------------"
+  printf "%-20s %5s %10s %5s %15s\n" "$node" "$cpus" "$mem_val" "$gpus" "$gpu_idx"
+
+  if ! $hideprocesses; then
+    echo
+    printf "    %7s  %6s  %9s  %7s %s\n" "PID" "CPU" "MEM (MB)" "GPU IDX" "CMD"
+    printf "    %7s  %6s  %9s  %7s %s\n" "-------" "------" "---------" "-------" "--------------------------------"
+  fi
+
+  # get pids string and normalize whitespace
+  pids="${NODE_PROCESSES[$node]:-}"
+  pids="$(printf '%s' "$pids" | awk '{$1=$1;print}')"
+  warning_nopids=0
+
+  if [ -z "$pids" ]; then
+    echo "    (no processes found on node)"
+    warning_nopids=1
+  else
+    # collect seen GPUs (unique) while we walk the pids
+    declare -A SEEN_GPUS=()
+    mapfile -t pid_array < <(printf "%s\n" $pids | sort -n)
+
+    for pid in "${pid_array[@]}"; do
+      [ -z "$pid" ] && continue
+      key="${node}|${pid}"
+      cpu="${PROC_CPU[$key]:-0}"
+      mem_proc="${PROC_MEM[$key]:-0}"
+      gpus_proc="${PROC_GPUS[$key]:-}"
+      cmd="${PROC_CMD[$key]:-}"
+
+      # normalize command to one line
+      cmd_one_line="$(printf '%s' "$cmd" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g')"
+
+      # collect GPUs seen for this pid (accepts single number or comma-separated list)
+      if [ -n "$gpus_proc" ] && [ "$gpus_proc" != "-" ]; then
+        IFS=',' read -ra _garr <<< "$gpus_proc"
+        for g in "${_garr[@]}"; do
+          # strip whitespace
+          g="${g//[[:space:]]/}"
+          if [ -n "$g" ]; then
+            SEEN_GPUS[$g]=1
+          fi
+        done
+      fi
+
+      if ! $hideprocesses; then
+        if [[ ! "$cmd_one_line" =~ (slurmstepd:|sshd:|sleep[[:space:]]+100000000|job[0-9]+/slurm_script) ]]; then
+          printf "    %7s  %6s  %9s  %7s %s\n" "$pid" "$cpu" "$mem_proc" "$gpus_proc" "$cmd_one_line"
+        fi
+      fi
     done
+  fi
 
-} | column -t
+  total_cpu="${NODE_TOTAL_CPU[$node]:-0}"
+  total_mem="${NODE_TOTAL_MEM[$node]:-0}"
+  cpu_util_pct="$(awk "BEGIN {print $total_cpu/$cpus}")"
+  mem_util_pct="$(awk "BEGIN {print $total_mem*100/$mem_val}")"
+
+  echo
+  printf "    %13s  %12s  %16s  %12s\n" "CPU UTIL" "CPU UTIL (%)" "MEM UTIL (MB)" "MEM UTIL (%)"
+  printf "    %13s  %12s  %16s  %12s\n" "-------------" "------------" "----------------" "------------"
+  printf "    %13s  %12s  %16s  %12s\n" \
+         "$(printf "%.0f / %d" "$total_cpu" "$(echo "$cpus * 100" | bc)")" \
+         "$(printf "%3.2f%%" "$cpu_util_pct")" \
+         "$(printf "%.0f / %d" "$total_mem" "$mem_val")" \
+         "$(printf "%3.2f%%" "$mem_util_pct")"
+  echo
+
+  # --- prepare sorted unique GPU indexes seen for this node ---
+  # mapfile the sorted keys (numeric sort)
+  mapfile -t seen_gpu_idxs < <(printf "%s\n" "${!SEEN_GPUS[@]}" | sort -n)
+
+  # --- Print GPU stats for this node ---
+  if [ ${#seen_gpu_idxs[@]} -gt 0 ] && [ -n "${seen_gpu_idxs[0]}" ]; then
+    echo
+    printf "    %s  %15s  %12s  %12s\n" "GPU" "MEM UTIL (MB)" "MEM UTIL (%)" "GPU UTIL (%)"
+    printf "    %s  %15s  %12s  %12s\n" "---" "---------------" "------------" "------------"
+
+    # loop only through seen GPU indexes (sorted, unique)
+    for idx in "${seen_gpu_idxs[@]}"; do
+      key="${node}|${idx}"
+      total="${GPU_TOTAL_MEM[$key]:-0}"
+      used="${GPU_USED_MEM[$key]:-0}"
+      util="${GPU_UTIL[$key]:-0}"
+
+      # guard against division by zero
+      if (( total > 0 )); then
+        mem_util=$(( used * 100 / total ))
+      else
+        mem_util=0
+      fi
+
+      printf "    %3s  %15s  %12s  %12s\n" \
+        "$idx" \
+        "$(printf "%6d / %6d" "$used" "$total")" \
+        "$(printf "%3.2f%%" "$mem_util")" \
+        "$(printf "%3d%%" "$util")"
+    done
+  fi
+
+  echo
+
+  warning_triggered=0  # flag to track if any warning was printed
+
+  # --- CPU warning (no processes) ---
+  if (( warning_nopids )); then
+      printf "    ${RED}WARNING${NC}: No processes running on the node\n"
+      warning_triggered=1
+  fi
+
+  # --- CPU warning (low utilization) ---
+  if awk "BEGIN {exit !($cpu_util_pct < 10)}"; then      
+      printf "    ${RED}WARNING${NC}: %s CPU(s) allocated but utilization is low (%.2f%%)\n" "$cpus" "$cpu_util_pct"
+      warning_triggered=1
+  fi
+
+  # --- Memory warning ---
+  if awk "BEGIN {exit !($mem_util_pct < 10)}"; then      
+      printf "    ${RED}WARNING${NC}: %.0f MB allocated but utilization is low (%.2f%%)\n" "$mem_val" "$mem_util_pct"
+      warning_triggered=1
+  fi
+
+  # --- GPU warning --- no processes at all
+  if (( ${NODE_GPUS[$node]:-0} > 0 )) && { [ ${#seen_gpu_idxs[@]} -eq 0 ] || [ -z "${seen_gpu_idxs[0]}" ]; }; then
+      echo -e "    ${RED}WARNING${NC}: ${NODE_GPUS[$node]} GPU(s) allocated but there are no processes using a GPU"
+      warning_triggered=1
+  fi
+
+  # --- GPU warning --- check no processes by each GPU
+  if (( ${NODE_GPUS[$node]:-0} > 0 )); then
+    IFS=',' read -ra node_gpu_idxs <<< "${NODE_GPU_IDX[$node]}"
+    for idx in "${node_gpu_idxs[@]}"; do
+      found=0
+      for seen in "${seen_gpu_idxs[@]}"; do
+        if [[ "$idx" == "$seen" ]]; then
+          found=1
+          break
+        fi
+      done
+      if [[ $found -eq 0 ]]; then
+        extra_msg=""
+        if [[ $node == tc-gpu* ]]; then
+          extra_msg=" (this is a HPE node, mapping between Slurm GPU IDX and nvidia-smi IDX ${RED}is not accurate${NC})"
+        fi
+
+        echo -e "    ${RED}WARNING${NC}: GPU IDX $idx allocated but there are no processes using the GPU$extra_msg"
+
+        warning_triggered=1
+      fi
+    done
+  fi
+
+  # --- GPU warning --- low utilization
+  if [ ${#seen_gpu_idxs[@]} -gt 0 ] && [ -n "${seen_gpu_idxs[0]}" ]; then
+      for idx in "${seen_gpu_idxs[@]}"; do
+          key="${node}|${idx}"
+          util="${GPU_UTIL[$key]:-0}"
+
+          # check if GPU utilization < 10%
+          if (( util < 10 )); then
+              echo -e "    ${RED}WARNING${NC}: GPU IDX $idx low utilization (${util}%)"
+              warning_triggered=1
+          fi
+      done
+  fi
+
+  # Add a blank line if any warning was printed
+  if (( warning_triggered )); then
+      echo
+  fi
+
+done
+
+done
