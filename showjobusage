@@ -305,8 +305,13 @@ for node_name in "${NODE_NAME[@]}"; do
     NODE_TOTAL_MEM["$node_name"]="0"
 
     # run remote command (if it fails, we continue with empty output)
-    output=$(timeout 60s ssh "$node_name" "showjobprocessesusage $jobid" 2>/dev/null || true)
-
+    output=""
+    if [[ -v NODE_GPUS[$node_name] && -n "${NODE_GPUS[$node_name]// }" ]]; then
+      output=$(timeout 60s ssh "$node_name" "showjobprocessesusage $jobid 1" 2>/dev/null || true)
+    else
+      output=$(timeout 60s ssh "$node_name" "showjobprocessesusage $jobid 0" 2>/dev/null || true)
+    fi
+    
     total_cpu=0
     total_mem=0
 
