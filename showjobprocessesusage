@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Usage: showjobprocessesusage <SlurmJobID>
+# Usage: showjobprocessesusage <SlurmJobID> <run_nvidia_smi>
 
 set -euo pipefail
 
-if [ $# -ne 1 ]; then
-  echo "Usage: $0 <SlurmJobID>"
+if [ $# -ne 2 ]; then
+  echo "Usage: $0 <SlurmJobID> <run_nvidia_smi>"
   exit 1
 fi
 
 jobid="$1"
+run_nvidia_smi="$2"
 
 # Get scontrol output and extract PIDs (skip header and any '-1' or non-numeric values)
 mapfile -t pids < <( scontrol listpids "$jobid" 2>/dev/null \
@@ -23,27 +24,30 @@ fi
 # Map GPU UUID to GPU index (1:1)
 declare -A UUID_TO_INDEX
 
-while IFS=',' read -r index uuid; do
-    index=$(echo "$index" | xargs)   # trim spaces
-    uuid=$(echo "$uuid" | xargs)
-    UUID_TO_INDEX["$uuid"]="$index"
-done < <(nvidia-smi --query-gpu=index,uuid --format=csv,noheader,nounits)
+if [ "$run_nvidia_smi" -eq 1 ]; then
+  while IFS=',' read -r index uuid; do
+      index=$(echo "$index" | xargs)   # trim spaces
+      uuid=$(echo "$uuid" | xargs)
+      UUID_TO_INDEX["$uuid"]="$index"
+  done < <(nvidia-smi --query-gpu=index,uuid --format=csv,noheader,nounits)
+fi
 
 # Map PID to list of GPU UUIDs (1:N even though most likely 1:1)
 declare -A PID_TO_UUID
 
-while IFS=',' read -r uuid pid; do
-    uuid=$(echo "$uuid" | xargs)
-    pid=$(echo "$pid" | xargs)
+if [ "$run_nvidia_smi" -eq 1 ]; then
+  while IFS=',' read -r uuid pid; do
+      uuid=$(echo "$uuid" | xargs)
+      pid=$(echo "$pid" | xargs)
 
-    # Append uuid to existing list for this pid
-    if [[ -n "${PID_TO_UUID[$pid]+x}" ]]; then
-        PID_TO_UUID["$pid"]+=$' '"$uuid"
-    else
-        PID_TO_UUID["$pid"]="$uuid"
-    fi
-
-done < <(nvidia-smi --query-compute-apps=gpu_uuid,pid --format=csv,noheader,nounits)
+      # Append uuid to existing list for this pid
+      if [[ -n "${PID_TO_UUID[$pid]+x}" ]]; then
+          PID_TO_UUID["$pid"]+=$' '"$uuid"
+      else
+          PID_TO_UUID["$pid"]="$uuid"
+      fi
+  done < <(nvidia-smi --query-compute-apps=gpu_uuid,pid --format=csv,noheader,nounits)
+fi
 
 # Map PIDs to UUIDs to IDX
 #for pid in "${!PID_TO_UUID[@]}"; do
