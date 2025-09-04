@@ -433,7 +433,7 @@ for i in "${!NODE_NAME[@]}"; do
       fi
 
       if ! $hideprocesses; then
-        if [[ ! "$cmd_one_line" =~ (showjobprocessesusage|slurmstepd:|sshd:|sleep[[:space:]]+100000000|job[0-9]+/slurm_script) ]]; then
+        if [[ ! "$cmd_one_line" =~ (nvidia-smi|showjobprocessesusage|slurmstepd:|sshd:|sleep[[:space:]]+100000000|job[0-9]+/slurm_script) ]]; then
           printf "    %7s  %6s  %9s  %7s %s\n" "$pid" "$cpu" "$mem_proc" "$gpus_proc" "$cmd_one_line"
         fi
       fi
