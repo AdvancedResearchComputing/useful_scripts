@@ -158,6 +158,8 @@ for jobid in $(squeue -h -w "$nodename" -o "%i"); do
     jobname=${jobname:-}
     runtime=$(_first_match 's/.*RunTime=\([^ ]*\).*/\1/p')
     runtime=${runtime:-}
+    timelimit=$(_first_match 's/.*TimeLimit=\([^ ]*\).*/\1/p')
+    timelimit=${timelimit:-}
 
     tres_line=$(_first_match 's/.*AllocTRES=\(.*\)/\1/p')
     if [ -z "$tres_line" ]; then
@@ -350,15 +352,16 @@ for jobid in $(squeue -h -w "$nodename" -o "%i"); do
 # ---------- print a summary ----------
 count=${#NODE_NAME[@]}
 cat <<EOF
-JOBID:    $jobid
-JOBNAME:  $jobname
-USER:     ${user:-N/A}
-ACCOUNT:  ${account:-N/A}
-RUNTIME:  ${runtime:-N/A}
-NODES:    ${nodes_total:-0}
-CPUS:     ${cpus_total:-0}
-MEM (MB): ${mem_mb:-0}
-GPUS:     ${gpus_total:-0}
+JOBID:     $jobid
+JOBNAME:   $jobname
+USER:      ${user:-N/A}
+ACCOUNT:   ${account:-N/A}
+RUNTIME:   ${runtime:-N/A}
+TIMELIMIT: ${timelimit:-N/A}
+NODES:     ${nodes_total:-0}
+CPUS:      ${cpus_total:-0}
+MEM (MB):  ${mem_mb:-0}
+GPUS:      ${gpus_total:-0}
 EOF
 echo
 
@@ -501,6 +504,13 @@ for i in "${!NODE_NAME[@]}"; do
 
   # --- GPU warning --- check no processes by each GPU
   if (( ${NODE_GPUS[$node]:-0} > 0 )); then
+
+    if [[ "$user" == "$USER" ]]; then
+        len=$(awk -F',' '{print NF}' <<< "${NODE_GPU_IDX[$node]}")
+        seq_string=$(seq -s, 0 $((len-1)))
+        NODE_GPU_IDX[$node]="$seq_string"
+    fi
+
     IFS=',' read -ra node_gpu_idxs <<< "${NODE_GPU_IDX[$node]}"
     for idx in "${node_gpu_idxs[@]}"; do
       found=0
