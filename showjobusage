@@ -308,10 +308,18 @@ for node_name in "${NODE_NAME[@]}"; do
 
     # run remote command (if it fails, we continue with empty output)
     output=""
-    if [[ -v NODE_GPUS[$node_name] && -n "${NODE_GPUS[$node_name]// }" ]]; then
-      output=$(timeout 60s ssh "$node_name" "showjobprocessesusage $jobid 1" 2>/dev/null || true)
+    if [[ "$user" == "$USER" ]]; then
+      if [[ -v NODE_GPUS[$node_name] && -n "${NODE_GPUS[$node_name]// }" ]]; then
+        output=$(timeout 60s srun --jobid="$jobid" --overlap bash -c "showjobprocessesusage $jobid 1" 2>/dev/null || true)
+      else
+        output=$(timeout 60s srun --jobid="$jobid" --overlap bash -c "showjobprocessesusage $jobid 0" 2>/dev/null || true)
+      fi
     else
-      output=$(timeout 60s ssh "$node_name" "showjobprocessesusage $jobid 0" 2>/dev/null || true)
+      if [[ -v NODE_GPUS[$node_name] && -n "${NODE_GPUS[$node_name]// }" ]]; then
+        output=$(timeout 60s ssh "$node_name" "showjobprocessesusage $jobid 1" 2>/dev/null || true)
+      else
+        output=$(timeout 60s ssh "$node_name" "showjobprocessesusage $jobid 0" 2>/dev/null || true)
+      fi
     fi
     
     total_cpu=0
@@ -347,12 +355,18 @@ for node_name in "${NODE_NAME[@]}"; do
 
     NODE_TOTAL_CPU["$node_name"]="$total_cpu"
     NODE_TOTAL_MEM["$node_name"]="$total_mem"
-   
+
     # === GPU stats collection ===
     if [[ -v NODE_GPUS[$node_name] && -n "${NODE_GPUS[$node_name]// }" ]]; then
-        nvidia_out=$(timeout 60s ssh "$node_name" \
+        if [[ "$user" == "$USER" ]]; then
+          nvidia_out=$(timeout 60s srun --jobid="$jobid" --overlap bash -c \
             "nvidia-smi --query-gpu=index,memory.total,memory.used,utilization.gpu \
              --format=csv,noheader,nounits" 2>/dev/null || true)
+        else
+          nvidia_out=$(timeout 60s ssh "$node_name" \
+            "nvidia-smi --query-gpu=index,memory.total,memory.used,utilization.gpu \
+             --format=csv,noheader,nounits" 2>/dev/null || true)
+        fi
 
         while IFS=',' read -r idx mem_total mem_used util; do
             idx="$(printf '%s' "$idx" | awk '{$1=$1;print}')"
@@ -441,7 +455,7 @@ for i in "${!NODE_NAME[@]}"; do
       fi
 
       if ! $hideprocesses; then
-        if [[ ! "$cmd_one_line" =~ (slurmstepd:|sshd:|sleep[[:space:]]+100000000|job[0-9]+/slurm_script) ]]; then
+        if [[ ! "$cmd_one_line" =~ (showjobprocessesusage|slurmstepd:|sshd:|sleep[[:space:]]+100000000|job[0-9]+/slurm_script) ]]; then
           printf "    %7s  %6s  %9s  %7s %s\n" "$pid" "$cpu" "$mem_proc" "$gpus_proc" "$cmd_one_line"
         fi
       fi
@@ -542,17 +556,10 @@ mapfile -t seen_gpu_idxs < <(printf "%s\n" "${!SEEN_GPUS[@]}" | sort -n)
         fi
       done
       if [[ $found -eq 0 ]]; then
-        extra_msg=""
-        if [[ $node == tc-gpu* ]]; then
-          extra_msg=" (this is a HPE node, mapping between Slurm GPU IDX and nvidia-smi IDX ${RED}is not accurate${NC})"
-        fi
-
-        echo -e "    ${RED}WARNING${NC}: GPU IDX $idx allocated but there are no processes using the GPU$extra_msg"
-
+        echo -e "    ${RED}WARNING${NC}: GPU IDX $idx (per nvidia-smi) allocated but there are no processes using the GPU"
         warning_triggered=1
       fi
     done
-    
   fi
 
   # --- GPU warning --- low utilization
@@ -563,7 +570,7 @@ mapfile -t seen_gpu_idxs < <(printf "%s\n" "${!SEEN_GPUS[@]}" | sort -n)
 
           # check if GPU utilization < 10%
           if (( util < 10 )); then
-              echo -e "    ${RED}WARNING${NC}: GPU IDX $idx low utilization (${util}%)"
+              echo -e "    ${RED}WARNING${NC}: GPU IDX $idx (per nvidia-smi) low utilization (${util}%)"
               warning_triggered=1
           fi
       done
