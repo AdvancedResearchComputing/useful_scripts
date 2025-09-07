@@ -123,7 +123,12 @@ getAccountUsage() {
     
     read parent_total_hrs parent_used_hrs parent_run_hrs <<< "$(getParentAccountUsage $parent $2)"
     parent_avail_hrs=$(awk "BEGIN {diff = $parent_total_hrs - $parent_used_hrs - $parent_run_hrs; printf \"%.2f\", (diff > 0 ? diff : 0)}")
-    parent_avail_pct=$(awk "BEGIN {printf \"%.1f\", ($parent_avail_hrs/$parent_total_hrs)*100}")
+    parent_avail_pct=$(awk "BEGIN { 
+        if ($parent_total_hrs == 0) 
+            printf \"0.0\"; 
+        else 
+            printf \"%.1f\", ($parent_avail_hrs/$parent_total_hrs)*100 
+    }")
   fi
 
   # Get users to exclude (those with '0' in the second field)
@@ -207,8 +212,15 @@ getAccountUsage() {
 
   # Compute percentages
   local used_pct avail_pct
-  used_pct=$(awk "BEGIN {printf \"%.1f\", ($used_hrs/$total_hrs)*100}")
-  avail_pct=$(awk "BEGIN {printf \"%.1f\", ($avail_hrs/$total_hrs)*100}")
+  used_pct=$(awk -v t="$total_hrs" -v u="$used_hrs" 'BEGIN {
+      if (t == 0) printf "0.0";
+      else printf "%.1f", (u/t)*100
+  }')
+
+  avail_pct=$(awk -v t="$total_hrs" -v a="$avail_hrs" 'BEGIN {
+      if (t == 0) printf "0.0";
+      else printf "%.1f", (a/t)*100
+  }')
 
   echo "  Account: $acct_name"
   printf "    Account total:     %'12.2f\n" "$total_hrs"
@@ -253,6 +265,11 @@ getAccountUsage() {
 
 # Perform action based on input
 if [[ -n "$ACCOUNT" ]]; then
+  if [ "$ACCOUNT" == "personal" ]; then
+    echo "Personal accounts are restricted for testing during the first 90 days. Users need to be added to an allocation owned by a PI"
+    exit 0
+  fi
+      
   for cluster in tinkercliffs owl falcon; do
       if [[ -n "$CLUSTER" && "$CLUSTER" != "$cluster" ]]; then
           continue
@@ -269,6 +286,9 @@ elif [[ -n "$USER" ]]; then
       fi
       echo "Cluster: $cluster"
       for ACCOUNT in $accounts; do
+        if [ "$ACCOUNT" == "personal" ]; then
+          continue
+        fi
         getAccountUsage "$ACCOUNT" $cluster
         echo
       done
@@ -289,8 +309,20 @@ elif [[ -n "$PI" ]]; then
     fi
 
     avail_hrs=$(awk "BEGIN {diff = $total_hrs - $used_hrs - $run_hrs; printf \"%.2f\", (diff > 0 ? diff : 0)}")
-    used_pct=$(awk "BEGIN {printf \"%.1f\", ($used_hrs/$total_hrs)*100}")
-    avail_pct=$(awk "BEGIN {printf \"%.1f\", ($avail_hrs/$total_hrs)*100}")
+    used_pct=$(awk "BEGIN {
+        if ($total_hrs == 0)
+            printf \"0.0\";
+        else
+            printf \"%.1f\", ($used_hrs/$total_hrs)*100
+    }")
+
+    avail_pct=$(awk "BEGIN {
+        if ($total_hrs == 0)
+            printf \"0.0\";
+        else
+            printf \"%.1f\", ($avail_hrs/$total_hrs)*100
+    }")
+
 
     echo "  PI: $PI"
     printf "    Free-tier allocation\n"
@@ -303,6 +335,9 @@ elif [[ -n "$PI" ]]; then
     children=$(sacctmgr show assoc format=account,parentname,grpsubmit -np cluster=tinkercliffs | awk -F'|' -v parentname="__${PI}__" '$2 == parentname && $3 != 0 {print $1}')
 
     for ACCOUNT in $children; do
+        if [ "$ACCOUNT" == "personal" ]; then
+          continue
+        fi
         getAccountUsage "$ACCOUNT" $cluster
         echo
     done
