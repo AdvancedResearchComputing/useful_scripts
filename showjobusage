@@ -323,7 +323,6 @@ for node_name in "${NODE_NAME[@]}"; do
     fi
     
     total_cpu=0
-    total_mem=0
 
     # parse each line into the 5 fields; the final field (cmd) may contain '|' so
     # we only split on the first 4 '|' boundaries using read with IFS.
@@ -333,6 +332,12 @@ for node_name in "${NODE_NAME[@]}"; do
         # split into at most 5 fields on '|' (pid,cpu,mem,gpus,cmd)
         # Note: using 'read' with IFS='|' will assign remaining text to the last var
         IFS='|' read -r pid cpu mem gpus cmd <<< "$line"
+
+        # handle special "Total" line
+        if [[ "$pid" == "Total" ]]; then
+            NODE_TOTAL_MEM["$node_name"]="$mem"
+            continue
+        fi
 
         # normalize pid and skip malformed lines
         pid="$(printf '%s' "$pid" | awk '{$1=$1;print}')"  # trim
@@ -350,11 +355,9 @@ for node_name in "${NODE_NAME[@]}"; do
 
         # accumulate totals (awk for float-safe addition)
         total_cpu=$(awk -v a="$total_cpu" -v b="${cpu:-0}" 'BEGIN{printf "%.6f", a + b}')
-        total_mem=$(awk -v a="$total_mem" -v b="${mem:-0}" 'BEGIN{printf "%.6f", a + b}')
     done <<< "$output"
 
     NODE_TOTAL_CPU["$node_name"]="$total_cpu"
-    NODE_TOTAL_MEM["$node_name"]="$total_mem"
 
     # === GPU stats collection ===
     if [[ -v NODE_GPUS[$node_name] && -n "${NODE_GPUS[$node_name]// }" ]]; then
