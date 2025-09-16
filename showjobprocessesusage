@@ -120,3 +120,10 @@ for pid in "${pids[@]}"; do
   printf "%s|%s|%s|%s|%.100s\n" \
     "$pid" "$cpu" "$mem_mb" "$(get_gpu_idxs_for_pid "$pid")" "$cmd"
 done
+
+# Total memory currently used by the job on the node (in MB)
+if [ -f "/sys/fs/cgroup/system.slice/slurmstepd.scope/job_${jobid}/memory.current" ]; then
+    mem_bytes=$(< /sys/fs/cgroup/system.slice/slurmstepd.scope/job_${jobid}/memory.current)
+    mem_mb=$((mem_bytes / 1048576))
+    echo "Total||${mem_mb}||"
+fi
