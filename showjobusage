@@ -50,6 +50,12 @@ if ! raw_output=$(scontrol show job "$jobid" -d 2>/dev/null); then
     exit 3
 fi
 
+# Make sure we match exact case JobId= (to filter the correct job in array jobs)
+offset=$(grep -b -o -P '(?<!Array)JobId=' <<<"$raw_output" | awk -F: 'NR==2 {print $1}')
+if ! [[ -z "$offset" ]]; then
+    raw_output="${raw_output:0:$offset}"
+fi
+
 # ANSI color code for red
 RED='\033[0;31m'
 NC='\033[0m'  # No Color
@@ -168,6 +174,7 @@ _first_match() {
   printf '%s\n' "$raw_output" | sed -n "$1" | head -n1
 }
 
+jobid=$(_first_match 's/JobId=\([^ (]*\).*/\1/p')
 user=$(_first_match 's/.*UserId=\([^ (]*\).*/\1/p')
 user=${user:-}
 account=$(_first_match 's/.*Account=\([^ ]*\).*/\1/p')
@@ -587,3 +594,4 @@ mapfile -t seen_gpu_idxs < <(printf "%s\n" "${!SEEN_GPUS[@]}" | sort -n)
 done
 
 exit 0
+
