@@ -5,14 +5,88 @@ show_usage() {
 }
 
 JID=$1
+
+# just for better error handling
+set -euo pipefail
+
 NL=$(sacct -j $JID -X -nP -o nodelist 2>/dev/null)
 #[[ $? = 0 ]] && show_usage
-JS=$(sacct -j $JID -X -nP -o start)
-JE=$(sacct -j $JID -X -nP -o end)
+JS=$(SLURM_TIME_FORMAT=%s sacct -j "$JID" -X -nP -o start 2>/dev/null)
+JE=$(SLURM_TIME_FORMAT=%s sacct -j "$JID" -X -nP -o end 2>/dev/null)
+
+# Pull fields for job allocation
+ALLOCCPUS=$(sacct -j "$JID" -X -nP -o alloccpus 2>/dev/null)
+REQMEM=$(sacct -j "$JID" -X -nP -o reqmem 2>/dev/null)
+ALLOCTRES=$(sacct -j "$JID" -X -nP -o alloctres 2>/dev/null)
 
 if [[ $# -ne 1 ]]; then
   show_usage
 fi
+
+# just some validation for pulling node list
+if [[ -z "${NL:-}" || "$NL" == "Unknown" ]]; then
+  echo "ERROR: Job not found or accounting not available yet for: $JID or crosscheck you are on the correct cluster"
+  echo "Try: squeue -j $JID"
+  exit 1
+fi
+
+
+# Normalize Slurm times to UTC
+# - sacct reports local time
+# - currently grafana expects UTC for timestamps (the workaround is using broswer time in grafana)
+to_utc_z() {
+  local t="$1"
+
+  if [[ -z "$t" || "$t" == "Unknown" || "$t" == "None" ]]; then
+    echo ""
+    return 0
+  fi
+
+  t="${t%%|*}"
+
+  # trim whitespace
+  t="${t#"${t%%[![:space:]]*}"}"
+  t="${t%"${t##*[![:space:]]}"}"
+
+  # If epoch seconds, format directly
+  if [[ "$t" =~ ^[0-9]+$ ]]; then
+    date -u -d "@$t" +"%Y-%m-%dT%H:%M:%S.000Z"
+    return 0
+  fi
+
+  # Fallback: try parsing as a timestamp string
+  date -u -d "$t" +"%Y-%m-%dT%H:%M:%S.000Z"
+}
+
+
+FROM_UTC="$(to_utc_z "$JS")"
+
+# For running job: some validation since JE can be unknown or none
+if [[ -z "${JE:-}" || "$JE" == "Unknown" || "$JE" == "None" ]]; then
+  TO_PARAM="now"
+else
+  TO_UTC="$(to_utc_z "$JE")"
+  if [[ -z "$TO_UTC" ]]; then
+    TO_PARAM="now"
+  else
+    TO_PARAM="$TO_UTC"
+  fi
+fi
+
+
+# Job context GPU count from AllocTRES
+GPUCOUNT="0"
+if [[ -n "${ALLOCTRES:-}" ]]; then
+  gpu_field="$(echo "$ALLOCTRES" | tr ',' '\n' | awk -F'=' '$1=="gres/gpu"{print $2; exit}')"
+  if [[ -n "${gpu_field:-}" ]]; then
+    GPUCOUNT="$gpu_field"
+  fi
+fi
+
+# A quick header just for support context
+echo "Job: $JID (allocation: cpus=${ALLOCCPUS:-Unknown} mem=${REQMEM:-Unknown} gpus=$GPUCOUNT)"
+echo "Time window (UTC): from=$FROM_UTC to=$TO_PARAM"
+echo
 
 for NN in $(scontrol show hostnames $NL)
 do
@@ -26,7 +100,8 @@ do
     DS="prometheus-owl"
   fi
 
-  printf "$NN: "
-  echo "https://dashboard.arc.vt.edu/d/cej08t3a14lq8c/arc-cluster-node-efficiency?var-interval=1m&orgId=1&from=${JS}.000Z&to=${JE}.000Z&timezone=browser&var-datasource=${DS}&var-hostname=${NN}"
+  printf "%s:\n" "$NN"
+  echo "  https://dashboard.arc.vt.edu/d/cej08t3a14lq8c/arc-cluster-node-efficiency?var-interval=1m&orgId=1&from=${FROM_UTC}&to=${TO_PARAM}&timezone=browser&var-datasource=${DS}&var-hostname=${NN}"
+  echo
 
 done
