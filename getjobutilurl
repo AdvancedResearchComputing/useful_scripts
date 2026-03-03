@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 show_usage() {
   echo "Usage:"
   echo "  getjobutilurl <slurm_job_id>"
@@ -9,6 +10,15 @@ JID=$1
 # just for better error handling
 set -euo pipefail
 
+# color styling (cyan)
+if [[ -t 1 ]]; then
+  C=$'\033[0;36m'   # cyan
+  R=$'\033[0m'      # reset
+else
+  C=""
+  R=""
+fi
+
 NL=$(sacct -j $JID -X -nP -o nodelist 2>/dev/null)
 #[[ $? = 0 ]] && show_usage
 JS=$(SLURM_TIME_FORMAT=%s sacct -j "$JID" -X -nP -o start 2>/dev/null)
@@ -18,6 +28,19 @@ JE=$(SLURM_TIME_FORMAT=%s sacct -j "$JID" -X -nP -o end 2>/dev/null)
 ALLOCCPUS=$(sacct -j "$JID" -X -nP -o alloccpus 2>/dev/null)
 REQMEM=$(sacct -j "$JID" -X -nP -o reqmem 2>/dev/null)
 ALLOCTRES=$(sacct -j "$JID" -X -nP -o alloctres 2>/dev/null)
+
+# pull job state and user 
+JOB_STATE=$(sacct -j "$JID" -X -nP -o state 2>/dev/null | head -n 1)
+JOB_USER=$(sacct -j "$JID" -X -nP -o user 2>/dev/null | head -n 1)
+
+
+# pull cpu and gpu indices 
+SCONTROL_OUT="$(scontrol show job -d "$JID" 2>/dev/null || true)"
+
+JOB_GRES="$(echo "$SCONTROL_OUT" | tr ' ' '\n' | grep -E '^GRES=' | head -n 1 | cut -d= -f2 || true)"
+CPU_IDS="$(echo "$SCONTROL_OUT" | grep -oE 'CPU_IDs=[^ ]+' | head -n 1 | cut -d= -f2 || true)"
+GPU_IDX="$(echo "$SCONTROL_OUT" | grep -oE 'IDX:[0-9,-]+' | head -n 1 | cut -d: -f2 || true)"
+
 
 if [[ $# -ne 1 ]]; then
   show_usage
@@ -83,9 +106,16 @@ if [[ -n "${ALLOCTRES:-}" ]]; then
   fi
 fi
 
-# A quick header just for support context
-echo "Job: $JID (allocation: cpus=${ALLOCCPUS:-Unknown} mem=${REQMEM:-Unknown} gpus=$GPUCOUNT)"
-echo "Time window (UTC): from=$FROM_UTC to=$TO_PARAM"
+# quick header just for support context
+echo "${C}Job:${R} $JID  ${C}User:${R} ${JOB_USER:-Unknown}  ${C}State:${R} ${JOB_STATE:-Unknown}"
+echo "${C}Allocation:${R} cpus=${ALLOCCPUS:-Unknown} mem=${REQMEM:-Unknown} gpus=$GPUCOUNT"
+echo "${C}GRES (Slurm):${R} ${JOB_GRES:-Unknown}"
+echo "${C}Time window (UTC):${R} from=$FROM_UTC to=$TO_PARAM"
+echo
+
+# rename CPU_IDs label to CPU cores
+echo "${C}CPU cores (Slurm CPU_IDs):${R} ${CPU_IDS:-Unknown}"
+echo "${C}GPU IDX (Slurm):${R} ${GPU_IDX:-Unknown}"
 echo
 
 for NN in $(scontrol show hostnames $NL)
@@ -100,8 +130,7 @@ do
     DS="prometheus-owl"
   fi
 
-  printf "%s:\n" "$NN"
+  printf "%s:\n" "${C}${NN}${R}"
   echo "  https://dashboard.arc.vt.edu/d/cej08t3a14lq8c/arc-cluster-node-efficiency?var-interval=1m&orgId=1&from=${FROM_UTC}&to=${TO_PARAM}&timezone=browser&var-datasource=${DS}&var-hostname=${NN}"
   echo
-
 done
