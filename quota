@@ -163,7 +163,7 @@ print_alloc_quota() {
 			colors[5]=${YELLOW};
 			colors[6]=${RED};
 		fi
-		if [ "$left" == "0.00" ]; then
+		if [ "$left" == "0" ]; then
 			note+="Allocation has no funds. ";
 			colors[1]=${YELLOW};
 			colors[2]=${YELLOW};

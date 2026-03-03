@@ -1,0 +1,236 @@
+[
+  {
+    "id": 12113,
+    "resource": "Compute (Free)",
+    "status": "Expired",
+    "allocation_attribute": [
+      {
+        "allocation_attribute_type": "slurm_account_name",
+        "value": "hypersonic"
+      },
+      {
+        "allocation_attribute_type": "slurm_specs",
+        "value": "GrpTRESMins=billing=48000000"
+      },
+      {
+        "allocation_attribute_type": "slurm_specs",
+        "value": "GrpSubmit=0"
+      }
+    ]
+  },
+  {
+    "id": 12504,
+    "resource": "Compute (Free)",
+    "status": "Expired",
+    "allocation_attribute": [
+      {
+        "allocation_attribute_type": "slurm_account_name",
+        "value": "nml_arcadm_test"
+      },
+      {
+        "allocation_attribute_type": "Is Course?",
+        "value": "No"
+      },
+      {
+        "allocation_attribute_type": "slurm_specs",
+        "value": "GrpTRESMins=billing=48000000"
+      },
+      {
+        "allocation_attribute_type": "slurm_specs",
+        "value": "GrpSubmit=0"
+      },
+			{
+        "allocation_attribute_type": "compute_usage",
+				"value": "slurm_account_name: nml_cf_test (800.0K hours)<br>falcon: <i>0.0/800.0K hours used (0%)</i><br>owl: <i>0.0/800.0K hours used (0%)</i><br>tinkercliffs: <i>0.0/800.0K hours used (0%)</i>" 
+			}
+    ]
+  },
+  {
+    "id": 12968,
+    "resource": "Compute (Free)",
+    "status": "Expired",
+    "allocation_attribute": [
+      {
+        "allocation_attribute_type": "slurm_account_name",
+        "value": "arc_vis"
+      },
+      {
+        "allocation_attribute_type": "Is Course?",
+        "value": "No"
+      },
+      {
+        "allocation_attribute_type": "slurm_specs",
+        "value": "GrpTRESMins=billing=48000000"
+      },
+      {
+        "allocation_attribute_type": "slurm_specs",
+        "value": "GrpSubmit=0"
+      }
+    ]
+  },
+  {
+    "id": 12969,
+    "resource": "Compute (Free)",
+    "status": "Expired",
+    "allocation_attribute": [
+      {
+        "allocation_attribute_type": "slurm_account_name",
+        "value": "lidar_c1"
+      },
+      {
+        "allocation_attribute_type": "Is Course?",
+        "value": "No"
+      },
+      {
+        "allocation_attribute_type": "slurm_specs",
+        "value": "GrpTRESMins=billing=48000000"
+      },
+      {
+        "allocation_attribute_type": "slurm_specs",
+        "value": "GrpSubmit=0"
+      }
+    ]
+  },
+  {
+    "id": 13560,
+    "resource": "Compute (Free)",
+    "status": "Expired",
+    "allocation_attribute": [
+      {
+        "allocation_attribute_type": "slurm_account_name",
+        "value": "nml_cf_test"
+      },
+      {
+        "allocation_attribute_type": "Is Course?",
+        "value": "No"
+      },
+      {
+        "allocation_attribute_type": "slurm_specs",
+        "value": "GrpTRESMins=billing=48000000"
+      },
+      {
+        "allocation_attribute_type": "slurm_specs",
+        "value": "GrpSubmit=0"
+      }
+    ]
+  },
+  {
+    "id": 11982,
+    "resource": "Project (Free)",
+    "status": "Active",
+    "allocation_attribute": [
+      {
+        "allocation_attribute_type": "Storage_Group_Name",
+        "value": "arcadm"
+      },
+      {
+        "allocation_attribute_type": "Storage Quota (GB)",
+        "value": "10000"
+      },
+      {
+        "allocation_attribute_type": "share_via_globus",
+        "value": "Yes"
+      },
+      {
+        "allocation_attribute_type": "storage_usage",
+        "value": "4.07/10.0TB used (40%)"
+      }
+    ]
+  },
+  {
+    "id": 12336,
+    "resource": "Compute (Free)",
+    "status": "Active",
+    "allocation_attribute": [
+      {
+        "allocation_attribute_type": "slurm_account_name",
+        "value": "mabrownlab"
+      },
+      {
+        "allocation_attribute_type": "Is Course?",
+        "value": "No"
+      },
+      {
+        "allocation_attribute_type": "slurm_specs",
+        "value": "GrpTRESMins=billing=60000000"
+      },
+      {
+        "allocation_attribute_type": "slurm_specs",
+        "value": "GrpSubmit=-1"
+      }
+    ]
+  },
+  {
+    "id": 12649,
+    "resource": "Compute (Free)",
+    "status": "Active",
+    "allocation_attribute": [
+      {
+        "allocation_attribute_type": "slurm_account_name",
+        "value": "arcadm"
+      },
+      {
+        "allocation_attribute_type": "slurm_specs",
+        "value": "GrpTRESMins=billing=45000000"
+      },
+      {
+        "allocation_attribute_type": "slurm_specs",
+        "value": "GrpSubmit=-1"
+      },
+      {
+        "allocation_attribute_type": "Is Course?",
+        "value": "No"
+      },
+			{
+        "allocation_attribute_type": "compute_usage",
+				"value": "slurm_account_name: <i>arcadm (750.0K hours)</i><br>falcon: <i>4.0/750.0K hours used (0%)</i><br>owl: <i>16.5/750.0K hours used (2%)</i><br>tinkercliffs: <i>5.0/750.0K hours used (0%)</i>" 
+			}
+    ]
+  },
+  {
+    "id": 12820,
+    "resource": "Project (Free)",
+    "status": "Active",
+    "allocation_attribute": [
+      {
+        "allocation_attribute_type": "Storage_Group_Name",
+        "value": "polys_lidar_c1"
+      },
+      {
+        "allocation_attribute_type": "Storage Quota (GB)",
+        "value": "25000"
+      },
+      {
+        "allocation_attribute_type": "storage_usage",
+        "value": "0.01/25.0TB used (0%)"
+      }
+    ]
+  },
+  {
+    "id": 13547,
+    "resource": "Project (Free)",
+    "status": "Active",
+    "allocation_attribute": [
+      {
+        "allocation_attribute_type": "Storage_Group_Name",
+        "value": "nml_cf_test"
+      },
+      {
+        "allocation_attribute_type": "Is Course?",
+        "value": "No"
+      },
+      {
+        "allocation_attribute_type": "Storage Quota (GB)",
+        "value": "50000"
+      },
+      {
+        "allocation_attribute_type": "share_via_globus",
+        "value": "Yes"
+      },
+      {
+        "allocation_attribute_type": "storage_usage",
+        "value": "0.0/50.0TB used (0%)"
+      }
+    ]
+  }
+]
