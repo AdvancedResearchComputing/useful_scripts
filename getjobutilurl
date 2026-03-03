@@ -107,15 +107,16 @@ if [[ -n "${ALLOCTRES:-}" ]]; then
 fi
 
 # quick header just for support context
+echo
 echo "${C}Job:${R} $JID  ${C}User:${R} ${JOB_USER:-Unknown}  ${C}State:${R} ${JOB_STATE:-Unknown}"
 echo "${C}Allocation:${R} cpus=${ALLOCCPUS:-Unknown} mem=${REQMEM:-Unknown} gpus=$GPUCOUNT"
-echo "${C}GRES (Slurm):${R} ${JOB_GRES:-Unknown}"
+echo "${C}GRES:${R} ${JOB_GRES:-Unknown}"
 echo "${C}Time window (UTC):${R} from=$FROM_UTC to=$TO_PARAM"
 echo
 
 # rename CPU_IDs label to CPU cores
-echo "${C}CPU cores (Slurm CPU_IDs):${R} ${CPU_IDS:-Unknown}"
-echo "${C}GPU IDX (Slurm):${R} ${GPU_IDX:-Unknown}"
+echo "${C}CPU IDs:${R} ${CPU_IDS:-Unknown}"
+echo "${C}GPU IDX:${R} ${GPU_IDX:-Unknown}"
 echo
 
 for NN in $(scontrol show hostnames $NL)
