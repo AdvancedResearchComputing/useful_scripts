@@ -18,6 +18,7 @@ files=(
   jobload
   lmstat
   loginusage
+  nodestat
   quota
   setup_app
   showjobprocessesusage
