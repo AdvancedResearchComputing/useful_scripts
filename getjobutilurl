@@ -37,9 +37,31 @@ JOB_USER=$(sacct -j "$JID" -X -nP -o user 2>/dev/null | head -n 1)
 # pull cpu and gpu indices 
 SCONTROL_OUT="$(scontrol show job -d "$JID" 2>/dev/null || true)"
 
-JOB_GRES="$(echo "$SCONTROL_OUT" | tr ' ' '\n' | grep -E '^GRES=' | head -n 1 | cut -d= -f2 || true)"
+JOB_GRES="$(echo "$SCONTROL_OUT" | grep -oE 'JOB_GRES=[^ ]+' | head -n 1 | cut -d= -f2 || true)"
 CPU_IDS="$(echo "$SCONTROL_OUT" | grep -oE 'CPU_IDs=[^ ]+' | head -n 1 | cut -d= -f2 || true)"
 GPU_IDX="$(echo "$SCONTROL_OUT" | grep -oE 'IDX:[0-9,-]+' | head -n 1 | cut -d: -f2 || true)"
+
+# multi-node jobs:  per-node CPU_IDs and GPU IDX
+declare -A NODE_CPU_IDS
+declare -A NODE_GPU_IDX
+
+while IFS= read -r line; do
+  # only consider lines that include Nodes= and CPU_IDs=
+  [[ "$line" == *"Nodes="* ]] || continue
+  [[ "$line" == *"CPU_IDs="* ]] || continue
+
+  nodes_expr="$(echo "$line" | grep -oE 'Nodes=[^ ]+' | cut -d= -f2 || true)"
+  cpu_ids_val="$(echo "$line" | grep -oE 'CPU_IDs=[^ ]+' | cut -d= -f2 || true)"
+  gpu_idx_val="$(echo "$line" | grep -oE 'IDX:[0-9,-]+' | cut -d: -f2 || true)"
+
+  [[ -z "${nodes_expr:-}" ]] && continue
+
+  # expand into hostnames
+  for host in $(scontrol show hostnames "$nodes_expr" 2>/dev/null); do
+    [[ -n "${cpu_ids_val:-}" ]] && NODE_CPU_IDS["$host"]="$cpu_ids_val"
+    [[ -n "${gpu_idx_val:-}" ]] && NODE_GPU_IDX["$host"]="$gpu_idx_val"
+  done
+done < <(echo "$SCONTROL_OUT" | sed -n '/^[[:space:]]*Nodes=/p')
 
 
 if [[ $# -ne 1 ]]; then
@@ -51,6 +73,13 @@ if [[ -z "${NL:-}" || "$NL" == "Unknown" ]]; then
   echo "ERROR: Job not found or accounting not available yet for: $JID or crosscheck you are on the correct cluster"
   echo "Try: squeue -j $JID"
   exit 1
+fi
+
+#get number of nodes from the node list
+NUM_NODES=$(scontrol show hostnames "$NL" 2>/dev/null | wc -l)
+IS_MULTI_NODE=0
+if [[ "${NUM_NODES:-0}" -gt 1 ]]; then
+  IS_MULTI_NODE=1
 fi
 
 
@@ -112,14 +141,10 @@ echo "${C}Job:${R} $JID  ${C}User:${R} ${JOB_USER:-Unknown}  ${C}State:${R} ${JO
 echo "${C}Allocation:${R} cpus=${ALLOCCPUS:-Unknown} mem=${REQMEM:-Unknown} gpus=$GPUCOUNT"
 echo "${C}GRES:${R} ${JOB_GRES:-Unknown}"
 echo "${C}Time window (UTC):${R} from=$FROM_UTC to=$TO_PARAM"
+echo "${C}Nodes:${R} ${NUM_NODES:-Unknown}"
 echo
 
-# rename CPU_IDs label to CPU cores
-echo "${C}CPU IDs:${R} ${CPU_IDS:-Unknown}"
-echo "${C}GPU IDX:${R} ${GPU_IDX:-Unknown}"
-echo
-
-for NN in $(scontrol show hostnames $NL)
+for NN in $(scontrol show hostnames "$NL")
 do
   if [[ $SYSNAME = "tinkercliffs" ]]
   then
@@ -131,7 +156,13 @@ do
     DS="prometheus-owl"
   fi
 
+  #per-node CPU/GPU indices
+  NN_CPU_IDS="${NODE_CPU_IDS[$NN]:-${CPU_IDS:-Unknown}}"
+  NN_GPU_IDX="${NODE_GPU_IDX[$NN]:-${GPU_IDX:-Unknown}}"
+
   printf "%s:\n" "${C}${NN}${R}"
   echo "  https://dashboard.arc.vt.edu/d/cej08t3a14lq8c/arc-cluster-node-efficiency?var-interval=1m&orgId=1&from=${FROM_UTC}&to=${TO_PARAM}&timezone=browser&var-datasource=${DS}&var-hostname=${NN}"
+  echo "  ${C}CPU IDs:${R} ${NN_CPU_IDS:-Unknown}"
+  echo "  ${C}GPU IDX:${R} ${NN_GPU_IDX:-Unknown}"
   echo
 done
