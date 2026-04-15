@@ -1,0 +1,41 @@
+#!/bin/bash
+
+TARGET_USER=${1:-$USER}
+
+echo "Checking GPU utilization for $TARGET_USER"
+
+# 1. Get Job ID and Node List
+JOBS=$(squeue -u "$TARGET_USER" -t RUNNING --noheader -o "%i|%N")
+
+Num_Jobs=$(squeue -u jhonnyv19 | wc -l)
+echo "$TARGET_USER has $Num_Jobs jobs"
+
+if [ -z "$JOBS" ]; then
+    echo "No running jobs found."
+    exit 0
+fi
+
+for entry in $JOBS; do
+    JOBID=$(echo $entry | cut -d'|' -f1)
+    NODELIST=$(echo $entry | cut -d'|' -f2)
+    NODES=$(scontrol show hostnames "$NODELIST")
+
+    for node in $NODES; do
+        # 2. Extract Slurm's internal GPU IDX (e.g., 0,1)
+        # Using grep to find the IDX specifically for the node in question
+        GPU_IDS=$(scontrol show job "$JOBID" -d | grep "$node" | grep -oP 'IDX:\K[^)]+')
+
+        if [ -z "$GPU_IDS" ]; then
+            continue
+        fi
+
+        echo "------------------------------------------------"
+        echo "JobID: $JOBID  |  Node: $node"
+        echo "Slurm Allocated GPU Index: $GPU_IDS"
+        echo "------------------------------------------------"
+
+        # 3. Force nvidia-smi to use PCI_BUS_ID order (usually matches Slurm)
+        # and query only the indices provided by Slurm
+        ssh -q -o ConnectTimeout=5 "$node" "export CUDA_DEVICE_ORDER=PCI_BUS_ID; nvidia-smi -i $GPU_IDS --query-gpu=index,utilization.gpu,memory.used,name --format=csv,noheader"
+    done
+done
