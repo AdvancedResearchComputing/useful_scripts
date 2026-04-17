@@ -7,7 +7,7 @@ echo "Checking GPU utilization for $TARGET_USER"
 # 1. Get Job ID and Node List
 JOBS=$(squeue -u "$TARGET_USER" -t RUNNING --noheader -o "%i|%N")
 
-Num_Jobs=$(squeue -u "$TARGET_USER" -t RUNNING --noheader | wc -l)
+Num_Jobs=$(squeue -u jhonnyv19 | wc -l)
 echo "$TARGET_USER has $Num_Jobs jobs"
 
 if [ -z "$JOBS" ]; then
