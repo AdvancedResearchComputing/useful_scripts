@@ -21,6 +21,7 @@ files=(
   nodestat
   quota
   setup_app
+  showjobgpuusage
   showjobprocessesusage
   showjobusage
   shownodeusage
