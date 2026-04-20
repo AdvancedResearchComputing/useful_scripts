@@ -58,6 +58,7 @@ print_ess_gpfs_quota() {
     if [ -s "$projects_cache" ]; then
         echo
 
+        local last_updated="$(ls -l "$projects_cache" | awk '{print $6, $7, $8}')"
         json=$(cat "$projects_cache")
         while read line; do
             local colors=('' '' '' '' '' '' '')
@@ -66,7 +67,7 @@ print_ess_gpfs_quota() {
 
             # If account is expired
             if [ "$num_fields" -lt 3 ]; then
-		local row=("$user" "$path" "0" "0" "EXPIRED" "EXPIRED")
+		local row=("$user" "$path" "0" "0" "EXPIRED" "EXPIRED" "$last_updated")
                 print_row row[@] colors[@]
                 continue
             fi
@@ -80,7 +81,7 @@ print_ess_gpfs_quota() {
 	    local files_usage=$(echo $line | awk -F\| '{print $4}');
 	    local files_quota=$(echo $line | awk -F\| '{print $5}');
 
-            local row=("$user" "$path" "$block_usage_gib" "$block_quota_gib" "$files_usage" "$files_quota")
+            local row=("$user" "$path" "$block_usage_gib" "$block_quota_gib" "$files_usage" "$files_quota" "$last_updated")
             print_row row[@] colors[@]
 
         done < <(cat "$projects_cache" | python3 <( echo '
@@ -105,8 +106,10 @@ print_home_quota() {
 
 	local json="";
 	local home_cache="/home/$user/$CACHE_DIR/home";
+	local last_updated="";
 	if [ -s "$home_cache" ]; then
 		json=$(cat "$home_cache");
+		last_updated="$(ls -l "$home_cache" | awk '{print $6, $7, $8}')"
 	fi
 
 	[ -z "$json" ] && return; # skip when response is empty
@@ -118,7 +121,7 @@ print_home_quota() {
 	local limit_GiB=$(bytes_to_GB "$limit_bytes")
 
 	local colors=('' '' '' '' '' '' '')
-	local row=("$user" "/home" "$usage_GiB" "$limit_GiB" "-" "-")
+	local row=("$user" "/home" "$usage_GiB" "$limit_GiB" "-" "-" "$last_updated")
 	print_row row[@] colors[@];
 }
 
@@ -272,7 +275,7 @@ print_gpfs_groups_quota() {
 
 print_storage_header() {
 	printf "$(print_padding HEADER_COLORS[@] 'header')" \
-		"USER" "FILESYS/SET" "DATA (GB)" "QUOTA (GB)" "FILES" "QUOTA" "NOTE"
+		"USER" "FILESYS/SET" "DATA (GB)" "QUOTA (GB)" "FILES" "QUOTA" "LAST UPDATED"
 }
 
 print_alloc_header() {
