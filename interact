@@ -60,21 +60,21 @@ fi
 
 # If gres not specified by user (and def_gres not empty)
 if [[ $original_args != *"--gres=gpu"* && \
-    $original_args != *"--gpus="* && \
-    $original_args != *"--gpus-per-node"* && \
-    $original_args != *"--gpus-per-task"* && \
+    $original_args != *"--gres gpu"* && \
+    $original_args != *"--gpus"* && \
     ! -z $def_gres ]]; then
-    echo -e "${YELLOW} --- No gres specified:${NC} setting --gres=gpu:$def_gres"
-    extra_args="--gres=gpu:$def_gres $extra_args"
+    echo -e "${YELLOW} --- No gres specified:${NC} setting --gres=$def_gres"
+    extra_args="--gres=$def_gres $extra_args"
 fi
 
-##--gpus-per-task needs to be set with either --ntasks or --gpus= but Slurm throws incorrect error for normal_q, so not including this yet and letting slurm throw the error
-#if [[ $original_args == *--gpus-per-task* ]]; then
-#    if [[ $original_args != *"--ntasks"* && $original_args != *"--gpus="* ]]; then
-#        echo -e "${YELLOW} --- Failed to validate job spec. When using --gpus-per-task, either --gpus or -n/--ntasks needs to be specified. Setting --ntasks=1"
-#        extra_args="--ntasks=1 $extra_args"
-#    fi
-#fi
+# Check if a GPU is requested on a non-GPU partition
+if [[ $original_args =~ "--gres=gpu" || $original_args =~ "--gres gpu" || $original_args =~ "--gpus" ]]; then
+    # Check if a non-GPU partition is specified using regex to catch -p, --partition, spaces, and equals signs
+    if [[ $original_args =~ (-p|--partition)[[:space:]=]*(normal_q|preemptable_q) ]]; then
+        echo -e "${RED} --- Invalid Request:${NC} You cannot request GPUs on a non-GPU partition (normal_q or preemptable_q)."
+        exit 1
+    fi
+fi
 
 # Command to be run
 # Later arguments appear to be given priority so add user-provided
