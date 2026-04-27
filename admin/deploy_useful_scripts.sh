@@ -56,7 +56,7 @@ for f in "${files[@]}"; do
   else
     echo "Installing new script: $f"
     cp "$src" "$dst"
-    chmod 755 "$dst"
+    chmod 775 "$dst"
   fi
 done
 
