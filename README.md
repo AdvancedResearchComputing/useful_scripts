@@ -6,7 +6,7 @@ Scripts are located at ```/apps/common/useful_scripts```
 
 The module file is located at ```/apps/common/modules/all/useful_scripts.lua``` to prepend ```/apps/common/useful_scripts``` to $PATH and is loaded by default.
 
-> These useful scripts will help if you want to pick into what going in your job and on the cluster.
+> These useful scripts will help if you want to peek into what’s going on in your job and on the cluster.
  
 #### Most useful scripts (commands)
 
