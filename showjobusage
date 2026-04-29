@@ -241,6 +241,14 @@ declare -A NODE_TOTAL_MEM=()
 declare -A GPU_TOTAL_MEM=()
 declare -A GPU_USED_MEM=()
 declare -A GPU_UTIL=()
+   
+#A100 HPE GPU SLURM to NVIDIA-SMI Mapping
+declare -A MAP=(
+[0]=2  [2]=0
+[1]=3  [3]=1
+[4]=6  [6]=4
+[5]=7  [7]=5
+)
 
 # iterate over lines
 while IFS= read -r line; do
@@ -294,6 +302,22 @@ while IFS= read -r line; do
       node_name="$(printf '%s' "$node_name" | awk '{$1=$1;print}')"
       [[ -n "$nodefilter" && "$node_name" != "$nodefilter" ]] && continue
 
+
+      #Hard coded mapping for A100 HPE nodes
+      {
+          if [[ $node_name == "tc-gpu001" || $node_name == "tc-gpu002" || $node_name == "tc-gpu003" || $node_name == "tc-gpu004" ]]; then  
+              IFS=',' read -ra IDX_ARRAY <<<"$gpu_idx_expanded"
+
+              for i in "${!IDX_ARRAY[@]}"; do          # loops over the *indices*
+                  cur="${IDX_ARRAY[$i]}"                # e.g. "0"
+                  # If a mapping exists, use it; otherwise keep the original value.
+                  IDX_ARRAY[$i]="${MAP[$cur]:-$cur}"
+              done
+
+              gpu_idx_expanded=$(IFS=,; echo "${IDX_ARRAY[*]}")
+          fi
+      }
+      
       NODE_NAME+=("$node_name")
       NODE_CPUS+=("$cpu_count")
       NODE_MEM+=("${mem_val:-0}")      
