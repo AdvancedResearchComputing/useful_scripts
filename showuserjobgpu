@@ -123,13 +123,14 @@ while IFS='|' read -r JOBID NODELIST JOBSTATE; do
         SMICMD="nvidia-smi -i $GPU_IDS_FOR_NVIDIA_SMI \
             --query-gpu=index,utilization.gpu,memory.used,name \
             --format=csv,noheader,nounits"
-                    # Run the command over SSH; quiet failures are turned into a warning.
-                    if ! SSH_OUT=$(ssh -n -q -o ConnectTimeout=5 "$node" "$SMICMD" < /dev/null 2>/dev/null); then
-                        echo "WARNING: failed to query nvidia-smi for JobID $JOBID on $node (GPU IDs: $GPU_IDS_FOR_NVIDIA_SMI)" >&2
-                        # Still print a row so the user knows the node was seen
-                        printf_row "$JOBID" "$node" "$JOBSTATE" "$GPU_IDS" "—" "—" "—" "—"
-                        continue
-                    fi
+        
+        # Run the command over SSH; quiet failures are turned into a warning.
+        if ! SSH_OUT=$(ssh -n -q -o ConnectTimeout=5 "$node" "$SMICMD" < /dev/null 2>/dev/null); then
+            echo "WARNING: failed to query nvidia-smi for JobID $JOBID on $node (GPU IDs: $GPU_IDS_FOR_NVIDIA_SMI)" >&2
+            # Still print a row so the user knows the node was seen
+            printf_row "$JOBID" "$node" "$JOBSTATE" "$GPU_IDS" "—" "—" "—" "—"
+            continue
+        fi
 
         # -----------------------------------------------------------------
         # 5. One line per GPU (the table is easier to read this way)
