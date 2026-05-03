@@ -59,9 +59,21 @@ if [[ ! " $original_args" == *" -p"* && ! " $original_args" == *" --partition"* 
 fi
 
 # If gres not specified by user (and def_gres not empty)
-if [[ ! " $original_args" == *" --gres"* && ! -z $def_gres ]]; then
-  echo -e "${YELLOW} --- No gres specified:${NC} setting --gres=$def_gres"
-  extra_args="--gres=$def_gres $extra_args"
+if [[ $original_args != *"--gres=gpu"* && \
+    $original_args != *"--gres gpu"* && \
+    $original_args != *"--gpus"* && \
+    ! -z $def_gres ]]; then
+    echo -e "${YELLOW} --- No gres specified:${NC} setting --gres=$def_gres"
+    extra_args="--gres=$def_gres $extra_args"
+fi
+
+# Check if a GPU is requested on a non-GPU partition
+if [[ $original_args =~ "--gres=gpu" || $original_args =~ "--gres gpu" || $original_args =~ "--gpus" ]]; then
+    # Check if a non-GPU partition is specified using regex to catch -p, --partition, spaces, and equals signs
+    if [[ $original_args =~ (-p|--partition)[[:space:]=]*(normal_q|preemptable_q) ]]; then
+        echo -e "${RED} --- Invalid Request:${NC} You cannot request GPUs on a non-GPU partition (normal_q or preemptable_q)."
+        exit 1
+    fi
 fi
 
 # Command to be run

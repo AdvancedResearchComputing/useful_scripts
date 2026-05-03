@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 show_usage() {
   echo "Usage:"
   echo "  getjobutilurl <slurm_job_id>"
@@ -9,6 +10,15 @@ JID=$1
 # just for better error handling
 set -euo pipefail
 
+# color styling (cyan)
+if [[ -t 1 ]]; then
+  C=$'\033[0;36m'   # cyan
+  R=$'\033[0m'      # reset
+else
+  C=""
+  R=""
+fi
+
 NL=$(sacct -j $JID -X -nP -o nodelist 2>/dev/null)
 #[[ $? = 0 ]] && show_usage
 JS=$(SLURM_TIME_FORMAT=%s sacct -j "$JID" -X -nP -o start 2>/dev/null)
@@ -19,6 +29,97 @@ ALLOCCPUS=$(sacct -j "$JID" -X -nP -o alloccpus 2>/dev/null)
 REQMEM=$(sacct -j "$JID" -X -nP -o reqmem 2>/dev/null)
 ALLOCTRES=$(sacct -j "$JID" -X -nP -o alloctres 2>/dev/null)
 
+# pull job state and user 
+JOB_STATE=$(sacct -j "$JID" -X -nP -o state 2>/dev/null | head -n 1)
+JOB_USER=$(sacct -j "$JID" -X -nP -o user 2>/dev/null | head -n 1)
+
+
+# pull cpu and gpu indices 
+SCONTROL_OUT="$(scontrol show job -d "$JID" 2>/dev/null || true)"
+
+JOB_GRES="$(echo "$SCONTROL_OUT" | grep -oE 'JOB_GRES=[^ ]+' | head -n 1 | cut -d= -f2 || true)"
+CPU_IDS="$(echo "$SCONTROL_OUT" | grep -oE 'CPU_IDs=[^ ]+' | head -n 1 | cut -d= -f2 || true)"
+GPU_IDX="$(echo "$SCONTROL_OUT" | grep -oE 'IDX:[0-9,-]+' | head -n 1 | cut -d: -f2 || true)"
+
+# expand IDX token like "0,1,3" or "5-6" -> "0,1,3" or "5,6"
+expand_idx_list() {
+  local s="$1"
+  [ -z "$s" ] && { echo ""; return; }
+  IFS=',' read -ra parts <<< "$s"
+  local -a out=()
+  for p in "${parts[@]}"; do
+    if [[ "$p" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+      local a=${BASH_REMATCH[1]} b=${BASH_REMATCH[2]}
+      local i
+      for ((i=a;i<=b;i++)); do
+        out+=("$i")
+      done
+    elif [[ "$p" =~ ^[0-9]+$ ]]; then
+      out+=("$p")
+    fi
+  done
+  # join with commas
+  local IFS=,
+  echo "${out[*]}"
+}
+
+# multi-node jobs:  per-node CPU_IDs and GPU IDX
+declare -A NODE_CPU_IDS
+declare -A NODE_GPU_IDX
+
+#A100 HPE GPU SLURM to NVIDIA-SMI Mapping
+declare -A MAP=(
+[0]=2  [2]=0
+[1]=3  [3]=1
+[4]=6  [6]=4
+[5]=7  [7]=5
+)
+
+while IFS= read -r line; do
+  # only consider lines that include Nodes= and CPU_IDs=
+  [[ "$line" == *"Nodes="* ]] || continue
+  [[ "$line" == *"CPU_IDs="* ]] || continue
+
+  nodes_expr="$(echo "$line" | grep -oE 'Nodes=[^ ]+' | cut -d= -f2 || true)"
+  cpu_ids_val="$(echo "$line" | grep -oE 'CPU_IDs=[^ ]+' | cut -d= -f2 || true)"
+  #gpu_idx_val="$(echo "$line" | grep -oE 'IDX:[0-9,-]+' | cut -d: -f2 || true)"
+  
+  gpu_idx_raw=$(printf '%s\n' "$line" | sed -n 's/.*IDX:\([^)]*\).*/\1/p' | head -n1 || true)
+  gpu_idx_expanded=""
+  if [ -n "$gpu_idx_raw" ]; then
+      gpu_idx_expanded=$(expand_idx_list "$gpu_idx_raw")
+  fi
+  echo $gpu_idx_expanded
+
+      
+  #Hard coded mapping for A100 HPE nodes
+  {
+      if [[ $nodes_expr == "tc-gpu001" || $nodes_expr == "tc-gpu002" || $nodes_expr == "tc-gpu003" || $nodes_expr == "tc-gpu004" ]]; then  
+          IFS=',' read -ra IDX_ARRAY <<<"$gpu_idx_expanded"
+
+          for i in "${!IDX_ARRAY[@]}"; do          # loops over the *indices*
+              cur="${IDX_ARRAY[$i]}"                # e.g. "0"
+              # If a mapping exists, use it; otherwise keep the original value.
+              IDX_ARRAY[$i]="${MAP[$cur]:-$cur}"
+          done
+
+          gpu_idx_expanded=$(IFS=,; echo "${IDX_ARRAY[*]}")
+      fi
+  }
+
+  echo $nodes_expr
+
+  [[ -z "${nodes_expr:-}" ]] && continue
+
+  # expand into hostnames
+  for host in $(scontrol show hostnames "$nodes_expr" 2>/dev/null); do
+    [[ -n "${cpu_ids_val:-}" ]] && NODE_CPU_IDS["$host"]="$cpu_ids_val"
+    [[ -n "${gpu_idx_expanded:-}" ]] && NODE_GPU_IDX["$host"]="$gpu_idx_expanded"
+    #[[ -n "${gpu_idx_val:-}" ]] && NODE_GPU_IDX["$host"]="$gpu_idx_val"
+  done
+done < <(echo "$SCONTROL_OUT" | sed -n '/^[[:space:]]*Nodes=/p')
+
+
 if [[ $# -ne 1 ]]; then
   show_usage
 fi
@@ -28,6 +129,13 @@ if [[ -z "${NL:-}" || "$NL" == "Unknown" ]]; then
   echo "ERROR: Job not found or accounting not available yet for: $JID or crosscheck you are on the correct cluster"
   echo "Try: squeue -j $JID"
   exit 1
+fi
+
+#get number of nodes from the node list
+NUM_NODES=$(scontrol show hostnames "$NL" 2>/dev/null | wc -l)
+IS_MULTI_NODE=0
+if [[ "${NUM_NODES:-0}" -gt 1 ]]; then
+  IS_MULTI_NODE=1
 fi
 
 
@@ -83,12 +191,16 @@ if [[ -n "${ALLOCTRES:-}" ]]; then
   fi
 fi
 
-# A quick header just for support context
-echo "Job: $JID (allocation: cpus=${ALLOCCPUS:-Unknown} mem=${REQMEM:-Unknown} gpus=$GPUCOUNT)"
-echo "Time window (UTC): from=$FROM_UTC to=$TO_PARAM"
+# quick header just for support context
+echo
+echo "${C}Job:${R} $JID  ${C}User:${R} ${JOB_USER:-Unknown}  ${C}State:${R} ${JOB_STATE:-Unknown}"
+echo "${C}Allocation:${R} cpus=${ALLOCCPUS:-Unknown} mem=${REQMEM:-Unknown} gpus=$GPUCOUNT"
+echo "${C}GRES:${R} ${JOB_GRES:-Unknown}"
+echo "${C}Time window (UTC):${R} from=$FROM_UTC to=$TO_PARAM"
+echo "${C}Nodes:${R} ${NUM_NODES:-Unknown}"
 echo
 
-for NN in $(scontrol show hostnames $NL)
+for NN in $(scontrol show hostnames "$NL")
 do
   if [[ $SYSNAME = "tinkercliffs" ]]
   then
@@ -100,8 +212,13 @@ do
     DS="prometheus-owl"
   fi
 
-  printf "%s:\n" "$NN"
-  echo "  https://dashboard.arc.vt.edu/d/cej08t3a14lq8c/arc-cluster-node-efficiency?var-interval=1m&orgId=1&from=${FROM_UTC}&to=${TO_PARAM}&timezone=browser&var-datasource=${DS}&var-hostname=${NN}"
-  echo
+  #per-node CPU/GPU indices
+  NN_CPU_IDS="${NODE_CPU_IDS[$NN]:-${CPU_IDS:-Unknown}}"
+  NN_GPU_IDX="${NODE_GPU_IDX[$NN]:-${GPU_IDX:-Unknown}}"
 
+  printf "%s:\n" "${C}${NN}${R}"
+  echo "  https://dashboard.arc.vt.edu/d/cej08t3a14lq8c/arc-cluster-node-efficiency?var-interval=1m&orgId=1&from=${FROM_UTC}&to=${TO_PARAM}&timezone=browser&var-datasource=${DS}&var-hostname=${NN}"
+  echo "  ${C}CPU IDs:${R} ${NN_CPU_IDS:-Unknown}"
+  echo "  ${C}GPU IDX:${R} ${NN_GPU_IDX:-Unknown}"
+  echo
 done
