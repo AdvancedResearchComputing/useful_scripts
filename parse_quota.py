@@ -2,7 +2,6 @@
 """Parse and pretty-print a summary of quota.json allocations."""
 
 import json
-import re
 import sys
 
 # Warning: quota values are not updated in real time and may take a few hours to refresh.
@@ -45,27 +44,20 @@ def summarize_compute_allocation(alloc):
         lines.append(account[0])
 
     billing_hrs = 0
-    specs = get_attr(attrs, "slurm_specs")
-    if specs:
-        for spec in specs:
-            items = spec.split("GrpTRESMins=billing=")
-            if len(items) > 1:
-                billing_hrs = int(int(items[1]) / 60)
+    specs = get_attr(attrs, "slurm_specs") + get_attr(attrs, "slurm_user_specs")
+    for spec in specs:
+        items = spec.split("GrpTRESMins=billing=")
+        if len(items) > 1:
+            billing_hrs = int(int(items[1]) / 60)
 
-    usage = get_attr(attrs, "compute_usage")
-    if usage:
-        items = usage[0].split("<br>")
-        for count, line in enumerate(items[1:]):
-            (cluster, cluster_usage) = line.split(": <i>")
-            digits = re.findall(r'[\d.]+', cluster_usage)
-            used = float(digits[0])
-            total = float(digits[1])
-            cluster_used_hrs = float(cluster_usage.split('/')[0])
-            left = int(billing_hrs - (billing_hrs * used / total))
+    rawusage = get_attr(attrs, "slurm_rawusage")
+    if rawusage:
+        for count, raw in enumerate(rawusage):
+            cluster, used_secs_str = raw.split("=")
+            left = billing_hrs - int(used_secs_str) // 3600
             if count != 0:
-                lines.append(f"")
+                lines.append("")
             lines.append(f"{cluster}|{billing_hrs}|{left}|{alloc['status']}|\n")
-
     else:
         lines.append(f"||||\n")
 
