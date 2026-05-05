@@ -130,7 +130,6 @@ print_alloc_quotas() {
 
 	print_alloc_header;
 
-	print_alloc_quota "$user" "moab"
 	print_alloc_quota "$user" "slurm"
 }
 
@@ -336,37 +335,13 @@ bytes_to_GB() {
 	echo "$size_in_bytes / $bytes_in_GB" | bc -l
 }
 
+print_rest_api_quota() {
+	local user="$1"
 
-main() {
-  while getopts "dh" opt; do
-    case "$opt" in
-      h) usage; exit 0
-    ;;
-    esac
-  done
-
-	if [ $# -gt 0 ]; then
-			# If we have arguments then we need root.
-			if [ 0 -ne $(id -u) ]; then
-					echo sudo/root required to check quota of a user list
-					exit 1
-			fi
-
-			user_list=$@
-	else
-			# If no arguments we are checking quota for the executing user.
-			user_list=$USER
-	fi
-
-        echo -e "${YELLOW}Warning: quota values are not updated in real time and may take a few hours to refresh.${NC}"
-	print_storage_header;
-	for user in $user_list; do
-		print_home_quota "$user"
-
-		json=$(curl -sk "https://coldfront.arc.vt.edu/api/arc/quota/" \
-			-H "Authorization: Token $(cat ~/.arc_quota/token)" 2>/dev/null)
-		if [ -n "$json" ]; then
-			echo "$json" | python3 <(cat <<EOF
+	local json=$(curl -sk "https://coldfront.arc.vt.edu/api/arc/quota/" \
+		-H "Authorization: Token $(cat ~/.arc_quota/token)" 2>/dev/null)
+	[ -z "$json" ] && return 1
+	echo "$json" | python3 <(cat <<EOF
 import sys, json
 
 def get_attr(attributes, attr_type):
@@ -425,7 +400,35 @@ for alloc in project_free:
     print(pid + "|" + summarize_storage_allocation(alloc))
 EOF
 )
-		else
+}
+
+
+main() {
+  while getopts "dh" opt; do
+    case "$opt" in
+      h) usage; exit 0
+    ;;
+    esac
+  done
+
+	if [ $# -gt 0 ]; then
+			# If we have arguments then we need root.
+			if [ 0 -ne $(id -u) ]; then
+					echo sudo/root required to check quota of a user list
+					exit 1
+			fi
+
+			user_list=$@
+	else
+			# If no arguments we are checking quota for the executing user.
+			user_list=$USER
+	fi
+
+        echo -e "${YELLOW}Warning: quota values are not updated in real time and may take a few hours to refresh.${NC}"
+	print_storage_header;
+	for user in $user_list; do
+		print_home_quota "$user"
+		if ! print_rest_api_quota "$user"; then
 			print_gpfs_quota "$user"
 			print_ess_gpfs_quota "$user"
 			print_alloc_quotas "$user"
