@@ -15,6 +15,18 @@
       {
         "allocation_attribute_type": "slurm_specs",
         "value": "GrpSubmit=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "tinkercliffs=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "falcon=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "owl=0"
       }
     ]
   },
@@ -38,11 +50,7 @@
       {
         "allocation_attribute_type": "slurm_specs",
         "value": "GrpSubmit=0"
-      },
-			{
-        "allocation_attribute_type": "compute_usage",
-				"value": "slurm_account_name: nml_cf_test (800.0K hours)<br>falcon: <i>0.0/800.0K hours used (0%)</i><br>owl: <i>0.0/800.0K hours used (0%)</i><br>tinkercliffs: <i>0.0/800.0K hours used (0%)</i>" 
-			}
+      }
     ]
   },
   {
@@ -65,6 +73,18 @@
       {
         "allocation_attribute_type": "slurm_specs",
         "value": "GrpSubmit=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "tinkercliffs=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "falcon=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "owl=0"
       }
     ]
   },
@@ -88,6 +108,18 @@
       {
         "allocation_attribute_type": "slurm_specs",
         "value": "GrpSubmit=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "tinkercliffs=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "falcon=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "owl=0"
       }
     ]
   },
@@ -111,6 +143,18 @@
       {
         "allocation_attribute_type": "slurm_specs",
         "value": "GrpSubmit=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "tinkercliffs=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "falcon=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "owl=0"
       }
     ]
   },
@@ -133,7 +177,19 @@
       },
       {
         "allocation_attribute_type": "storage_usage",
-        "value": "4.07/10.0TB used (40%)"
+        "value": "4.15/10.0TB used (41%)"
+      },
+      {
+        "allocation_attribute_type": "ess_files_usage",
+        "value": "2770428"
+      },
+      {
+        "allocation_attribute_type": "ess_files_quota",
+        "value": "10485760"
+      },
+      {
+        "allocation_attribute_type": "ess_block_usage_kib",
+        "value": "4051740256"
       }
     ]
   },
@@ -157,6 +213,18 @@
       {
         "allocation_attribute_type": "slurm_specs",
         "value": "GrpSubmit=-1"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "tinkercliffs=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "falcon=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "owl=0"
       }
     ]
   },
@@ -181,10 +249,18 @@
         "allocation_attribute_type": "Is Course?",
         "value": "No"
       },
-			{
-        "allocation_attribute_type": "compute_usage",
-				"value": "slurm_account_name: <i>arcadm (750.0K hours)</i><br>falcon: <i>4.0/750.0K hours used (0%)</i><br>owl: <i>16.5/750.0K hours used (2%)</i><br>tinkercliffs: <i>5.0/750.0K hours used (0%)</i>" 
-			}
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "tinkercliffs=81501"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "falcon=1477800"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "owl=207467"
+      }
     ]
   },
   {
@@ -202,7 +278,19 @@
       },
       {
         "allocation_attribute_type": "storage_usage",
-        "value": "0.01/25.0TB used (0%)"
+        "value": "0.11/25.0TB used (0%)"
+      },
+      {
+        "allocation_attribute_type": "ess_files_usage",
+        "value": "48334"
+      },
+      {
+        "allocation_attribute_type": "ess_files_quota",
+        "value": "10485760"
+      },
+      {
+        "allocation_attribute_type": "ess_block_usage_kib",
+        "value": "103964944"
       }
     ]
   },
@@ -230,6 +318,45 @@
       {
         "allocation_attribute_type": "storage_usage",
         "value": "0.0/50.0TB used (0%)"
+      },
+      {
+        "allocation_attribute_type": "ess_files_usage",
+        "value": "6"
+      },
+      {
+        "allocation_attribute_type": "ess_files_quota",
+        "value": "10485760"
+      },
+      {
+        "allocation_attribute_type": "ess_block_usage_kib",
+        "value": "0"
+      }
+    ]
+  },
+  {
+    "id": 13985,
+    "resource": "Compute (Free)",
+    "status": "Active",
+    "allocation_attribute": [
+      {
+        "allocation_attribute_type": "slurm_account_name",
+        "value": "personal"
+      },
+      {
+        "allocation_attribute_type": "slurm_user_specs",
+        "value": "GrpTRESMins=billing=28800"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "tinkercliffs=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "falcon=0"
+      },
+      {
+        "allocation_attribute_type": "slurm_rawusage",
+        "value": "owl=0"
       }
     ]
   }
