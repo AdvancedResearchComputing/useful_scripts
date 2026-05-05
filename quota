@@ -338,9 +338,11 @@ bytes_to_GB() {
 print_rest_api_quota() {
 	local user="$1"
 
-	local json=$(curl -sk "https://coldfront.arc.vt.edu/api/arc/quota/" \
+	local response=$(curl -sk -w "%{http_code}" "https://coldfront.arc.vt.edu/api/arc/quota/" \
 		-H "Authorization: Token $(cat ~/.arc_quota/token)" 2>/dev/null)
-	[ -z "$json" ] && return 1
+	local http_code="${response: -3}"
+	local json="${response:0:-3}"
+	[ "$http_code" != "200" ] && return 1
 	echo "$json" | python3 <(cat <<EOF
 import sys, json
 
