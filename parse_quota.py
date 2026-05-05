@@ -4,31 +4,6 @@
 import json
 import sys
 
-# Warning: quota values are not updated in real time and may take a few hours to refresh.
-# USER             FILESYS/SET                          DATA (GB)    QUOTA (GB)  FILES      QUOTA      NOTE
-# nml5566          /home                                14.9         640         -          -
-#
-# nml5566          /projects/nml_cf_test                0.0          50000       6          10485760
-# nml5566          /projects/arcadm                     4070.0       10000       2580806    10485760
-#
-# USER             ALLOCATION                           CLUSTER      QUOTA (hrs) LEFT (hrs) STATUS     NOTE
-# nml5566          statiwave                            tinkercliffs 1000000     999995     Active
-#                                                       falcon       1000000     1000000    Active
-#                                                       owl          1000000     1000000    Active
-# nml5566          iwave2                               tinkercliffs 1000000     1000000
-#                                                       falcon       1000000     1000000
-#                                                       owl          1000000     1000000
-# nml5566          arcadm                               tinkercliffs 750000      750000
-#                                                       falcon       750000      750000
-#                                                       owl          750000      750000
-# nml5566          nml_arcadm_test                      tinkercliffs 800000      800000
-#                                                       falcon       800000      800000
-#                                                       owl          800000      800000
-# nml5566          nml_cf_test                          tinkercliffs 800000      799999     Expired    Allocation has expired.
-#                                                       falcon       800000      800000     Expired    Allocation has expired.
-#                                                       owl          800000      800000     Expired    Allocation has expired.
-
-
 def get_attr(attributes, attr_type):
     """Return all values for a given allocation_attribute_type."""
     return [a["value"] for a in attributes if a["allocation_attribute_type"] == attr_type]
