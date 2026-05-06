@@ -48,7 +48,6 @@ print_gpfs_quota() {
 	echo
 	printf "$(print_padding HEADER_COLORS[@] 'header')" \
 			"" "GPFS" "" "" "" "" ""
-	print_gpfs_work_quota "$user"
 	print_gpfs_groups_quota "$user"
 }
 
@@ -197,21 +196,7 @@ for (k, v) in json.load(sys.stdin).items():
 
 }
 
-print_gpfs_work_quota() {
-	local user=$1
-
-	which mmlsquota >/dev/null 2>&1
-	[ "$?" -eq "0" ] || return;
-
-	local quota=$(mmlsquota -u $user work 2> /dev/null)
-
-	local fs='/work'
-	[ -n "$quota" ] || return;
-
-	parse_quota "$quota" "/work"
-}
-
-parse_quota() {
+parse_storage_quota() {
 	local quota="$1"
 	local fs="$2"
 	[ -n "$quota" ] || return;
@@ -267,7 +252,7 @@ print_gpfs_groups_quota() {
 		if [ -d "$group_path" ]; then
 			local d_group=$(stat -c %G "$group_path");
 			local quota=$(mmlsquota -j "$d_group" groups 2>/dev/null)
-			parse_quota "$quota" "$group_path"
+			parse_storage_quota "$quota" "$group_path"
 		fi
 	done
 }
