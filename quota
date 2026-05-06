@@ -319,60 +319,84 @@ print_rest_api_quota() {
 	echo "$json" | python3 <(cat <<EOF
 import sys, json
 
+RED    = "\033[31m"
+GREEN  = "\033[32m"
+YELLOW = "\033[33m"
+NC     = "\033[0m"
+
+WIDTHS = [16, 36, 12, 11, 10, 10, None]
+
+def print_row(fields, colors=None, is_header=True):
+    if colors is None:
+        colors = [""] * 7
+    parts = []
+    for i, (val, width) in enumerate(zip(fields, WIDTHS)):
+        color = colors[i] if i < len(colors) else ""
+        if not is_header and i == 2:
+            text = f"{float(val):.1f}" if val != "" else ""
+        elif not is_header and i == 3:
+            text = f"{float(val):.0f}" if val != "" else ""
+        else:
+            text = str(val)
+        if width is not None:
+            text = f"{text:<{width}}"
+        parts.append(f"{color}{text}{NC}")
+    print(" ".join(parts))
+
 def get_attr(attributes, attr_type):
     return [a["value"] for a in attributes if a["allocation_attribute_type"] == attr_type]
-
-def summarize_compute_allocation(alloc):
-    attrs = alloc["allocation_attribute"]
-    lines = []
-    account = get_attr(attrs, "slurm_account_name")
-    if account:
-        lines.append(account[0])
-    billing_hrs = 0
-    specs = get_attr(attrs, "slurm_specs") + get_attr(attrs, "slurm_user_specs")
-    for spec in specs:
-        items = spec.split("GrpTRESMins=billing=")
-        if len(items) > 1:
-            billing_hrs = int(int(items[1]) / 60)
-    rawusage = get_attr(attrs, "slurm_rawusage")
-    if rawusage:
-        for count, raw in enumerate(rawusage):
-            cluster, used_secs_str = raw.split("=")
-            left = billing_hrs - int(used_secs_str) // 3600
-            if count != 0:
-                lines.append("")
-            lines.append(f"{cluster}|{billing_hrs}|{left}|{alloc['status']}|\n")
-    else:
-        lines.append(f"||||\n")
-    return "|".join(lines)
-
-def summarize_storage_allocation(alloc):
-    attrs = alloc["allocation_attribute"]
-    lines = []
-    storage_group = get_attr(attrs, "Storage_Group_Name")
-    if storage_group:
-        lines.append(storage_group[0])
-    usage = get_attr(attrs, "storage_usage")
-    if usage:
-        data_gb = float(usage[0].split('/')[0]) * 1000
-        lines.append(str(round(data_gb, 1)))
-    quota = get_attr(attrs, "Storage Quota (GB)")
-    if quota:
-        lines.append(quota[0])
-    return "|".join(lines)
 
 pid = "$user"
 allocations = json.load(sys.stdin)
 compute_free = [a for a in allocations if a["resource"] == "Compute (Free)"]
-project_free = [a for a in allocations if a["resource"] == "Project (Free)"]
+project_free  = [a for a in allocations if a["resource"] == "Project (Free)"]
 
-print("USER|ALLOCATION|CLUSTER|QUOTA (hrs)|LEFT (hrs)|STATUS|NOTE")
+print_row(["USER", "ALLOCATION", "CLUSTER", "QUOTA (hrs)", "LEFT (hrs)", "STATUS", "NOTE"],
+          colors=[GREEN] * 7)
 for alloc in compute_free:
-    print(pid + "|" + summarize_compute_allocation(alloc))
+    if alloc["status"] == "Revoked":
+        continue
+    attrs = alloc["allocation_attribute"]
+    account = get_attr(attrs, "slurm_account_name")
+    if not account:
+        continue
+    billing_hrs = 0
+    for spec in get_attr(attrs, "slurm_specs") + get_attr(attrs, "slurm_user_specs"):
+        parts = spec.split("GrpTRESMins=billing=")
+        if len(parts) > 1:
+            billing_hrs = int(parts[1]) // 60
+    status = alloc["status"]
+    for count, raw in enumerate(get_attr(attrs, "slurm_rawusage")):
+        cluster, used_secs = raw.split("=")
+        left = billing_hrs - int(used_secs) // 3600
+        colors = [""] * 7
+        note = ""
+        if status == "Expired":
+            note += "Allocation has expired. "
+            colors[1] = colors[2] = colors[5] = YELLOW
+            colors[6] = RED
+        if left == 0:
+            note += "Allocation has no funds. "
+            colors[1] = colors[2] = colors[4] = YELLOW
+            colors[6] = RED
+        row = [pid, account[0], cluster, billing_hrs, left, status, note.strip()] \
+              if count == 0 else ["", "", cluster, billing_hrs, left, status, note.strip()]
+        print_row(row, colors)
+
 print()
-print("USER|FILESYS/SET|DATA (GB)|QUOTA (GB)|FILES|QUOTA|NOTE")
+
+print_row(["USER", "FILESYS/SET", "DATA (GB)", "QUOTA (GB)", "FILES", "QUOTA", "NOTE"],
+          colors=[GREEN] * 7)
 for alloc in project_free:
-    print(pid + "|" + summarize_storage_allocation(alloc))
+    attrs = alloc["allocation_attribute"]
+    storage_group = get_attr(attrs, "Storage_Group_Name")
+    if not storage_group:
+        continue
+    usage = get_attr(attrs, "storage_usage")
+    data_gb = float(usage[0].split('/')[0]) * 1000 if usage else 0.0
+    quota = get_attr(attrs, "Storage Quota (GB)")
+    quota_gb = float(quota[0]) if quota else 0.0
+    print_row([pid, storage_group[0], data_gb, quota_gb, "", "", ""], is_header=False)
 EOF
 )
 }
