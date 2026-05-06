@@ -43,15 +43,6 @@ def summarize_storage_allocation(alloc):
     attrs = alloc["allocation_attribute"]
     lines = [ ]
 
-    # Compute allocations
-    account = get_attr(attrs, "storage_used")
-    if account:
-        lines.append(account[0])
-
-    # specs = get_attr(attrs, "slurm_specs")
-    # for spec in specs:
-    #     lines.append(f"  Spec     : {spec}")
-
     # Storage allocations
     storage_group = get_attr(attrs, "Storage_Group_Name")
     if storage_group:
