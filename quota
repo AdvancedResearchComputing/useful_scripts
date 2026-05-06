@@ -2,11 +2,6 @@
 
 set -uo pipefail
 
-mmlsquota_bin="/usr/lpp/mmfs/bin/";
-lfs_bin="/opt/lustre/lustre/bin/";
-
-export PATH="$PATH:$mmlsquota_bin:$lfs_bin";
-
 CACHE_DIR=".arc_quota"
 
 RED=$(tput setaf 1);
@@ -227,22 +222,6 @@ parse_storage_quota() {
 		"$maximum_blocksize_GiB" "$current_files" "$maximum_files" "$note")
 
   print_row row[@] colors[@]
-}
-
-print_gpfs_groups_quota() {
-	local user=$1
-
-	which mmlsquota >/dev/null 2>&1
-	[ "$?" -eq "0" ] || return;
-
-	for u_group in $(groups "$user"); do
-		local group_path="/groups/$u_group/";
-		if [ -d "$group_path" ]; then
-			local d_group=$(stat -c %G "$group_path");
-			local quota=$(mmlsquota -j "$d_group" groups 2>/dev/null)
-			parse_storage_quota "$quota" "$group_path"
-		fi
-	done
 }
 
 print_storage_header() {
