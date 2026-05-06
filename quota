@@ -39,18 +39,6 @@ usage() {
   "
 }
 
-print_gpfs_quota() {
-	local user=$1
-
-	which mmlsquota >/dev/null 2>&1
-	[ "$?" -eq "0" ] || return;
-
-	echo
-	printf "$(print_padding HEADER_COLORS[@] 'header')" \
-			"" "GPFS" "" "" "" "" ""
-	print_gpfs_groups_quota "$user"
-}
-
 print_ess_gpfs_quota() {
     local user=$1
     local projects_cache="/home/$user/$CACHE_DIR/projects"
@@ -416,7 +404,6 @@ main() {
 	for user in $user_list; do
 		print_home_quota "$user"
 		if ! print_rest_api_quota "$user"; then
-			print_gpfs_quota "$user"
 			print_ess_gpfs_quota "$user"
 			print_alloc_quotas "$user"
 		fi
