@@ -331,6 +331,27 @@ allocations = json.load(sys.stdin)
 compute_free = [a for a in allocations if a["resource"] == "Compute (Free)"]
 project_free  = [a for a in allocations if a["resource"] == "Project (Free)"]
 
+print_row(["USER", "FILESYS/SET", "DATA (GB)", "QUOTA (GB)", "FILES", "QUOTA", "LAST UPDATED"],
+          colors=[GREEN] * 7)
+for alloc in project_free:
+    attrs = alloc["allocation_attribute"]
+    storage_group = get_attr(attrs, "Storage_Group_Name")
+    if not storage_group:
+        continue
+    usage = get_attr(attrs, "storage_usage")
+    data_gb = float(usage[0].split('/')[0]) * 1000 if usage else 0.0
+    quota = get_attr(attrs, "Storage Quota (GB)")
+    quota_gb = float(quota[0]) if quota else 0.0
+    files_usage = get_attr(attrs, "ess_files_usage")
+    files_quota = get_attr(attrs, "ess_files_quota")
+    last_updated = get_attr(attrs, "ess_files_usage", "modified")
+    print_row([pid, storage_group[0], data_gb, quota_gb,
+               files_usage[0] if files_usage else "",
+               files_quota[0] if files_quota else "",
+               datetime.fromisoformat(last_updated[0]).strftime("%b %-d %H:%M") if last_updated else ""], is_header=False)
+
+print()
+
 print_row(["USER", "ALLOCATION", "CLUSTER", "QUOTA (hrs)", "LEFT (hrs)", "STATUS", "NOTE"],
           colors=[GREEN] * 7)
 for alloc in compute_free:
@@ -362,27 +383,6 @@ for alloc in compute_free:
         row = [pid, account[0], cluster, billing_hrs, left, status, note.strip()] \
               if count == 0 else ["", "", cluster, billing_hrs, left, status, note.strip()]
         print_row(row, colors)
-
-print()
-
-print_row(["USER", "FILESYS/SET", "DATA (GB)", "QUOTA (GB)", "FILES", "QUOTA", "LAST UPDATED"],
-          colors=[GREEN] * 7)
-for alloc in project_free:
-    attrs = alloc["allocation_attribute"]
-    storage_group = get_attr(attrs, "Storage_Group_Name")
-    if not storage_group:
-        continue
-    usage = get_attr(attrs, "storage_usage")
-    data_gb = float(usage[0].split('/')[0]) * 1000 if usage else 0.0
-    quota = get_attr(attrs, "Storage Quota (GB)")
-    quota_gb = float(quota[0]) if quota else 0.0
-    files_usage = get_attr(attrs, "ess_files_usage")
-    files_quota = get_attr(attrs, "ess_files_quota")
-    last_updated = get_attr(attrs, "ess_files_usage", "modified")
-    print_row([pid, storage_group[0], data_gb, quota_gb,
-               files_usage[0] if files_usage else "",
-               files_quota[0] if files_quota else "",
-               datetime.fromisoformat(last_updated[0]).strftime("%b %-d %H:%M") if last_updated else ""], is_header=False)
 EOF
 )
 }
