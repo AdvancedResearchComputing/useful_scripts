@@ -297,6 +297,7 @@ print_rest_api_quota() {
 	[ "$http_code" != "200" ] && return 1
 	echo "$json" | python3 <(cat <<EOF
 import sys, json
+from datetime import datetime
 
 RED    = "\033[31m"
 GREEN  = "\033[32m"
@@ -381,7 +382,7 @@ for alloc in project_free:
     print_row([pid, storage_group[0], data_gb, quota_gb,
                files_usage[0] if files_usage else "",
                files_quota[0] if files_quota else "",
-               last_updated[0] if last_updated else ""], is_header=False)
+               datetime.fromisoformat(last_updated[0]).strftime("%-d %b %H:%M") if last_updated else ""], is_header=False)
 EOF
 )
 }
