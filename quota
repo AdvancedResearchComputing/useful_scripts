@@ -322,8 +322,8 @@ def print_row(fields, colors=None, is_header=True):
         parts.append(f"{color}{text}{NC}")
     print(" ".join(parts))
 
-def get_attr(attributes, attr_type):
-    return [a["value"] for a in attributes if a["allocation_attribute_type"] == attr_type]
+def get_attr(attributes, attr_type, field="value"):
+    return [a[field] for a in attributes if a["allocation_attribute_type"] == attr_type and field in a]
 
 pid = "$user"
 allocations = json.load(sys.stdin)
@@ -364,7 +364,7 @@ for alloc in compute_free:
 
 print()
 
-print_row(["USER", "FILESYS/SET", "DATA (GB)", "QUOTA (GB)", "FILES", "QUOTA", "NOTE"],
+print_row(["USER", "FILESYS/SET", "DATA (GB)", "QUOTA (GB)", "FILES", "QUOTA", "LAST UPDATED"],
           colors=[GREEN] * 7)
 for alloc in project_free:
     attrs = alloc["allocation_attribute"]
@@ -377,9 +377,11 @@ for alloc in project_free:
     quota_gb = float(quota[0]) if quota else 0.0
     files_usage = get_attr(attrs, "ess_files_usage")
     files_quota = get_attr(attrs, "ess_files_quota")
+    last_updated = get_attr(attrs, "ess_files_usage", "modified")
     print_row([pid, storage_group[0], data_gb, quota_gb,
                files_usage[0] if files_usage else "",
-               files_quota[0] if files_quota else "", ""], is_header=False)
+               files_quota[0] if files_quota else "",
+               last_updated[0] if last_updated else ""], is_header=False)
 EOF
 )
 }
