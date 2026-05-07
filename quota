@@ -382,7 +382,7 @@ for alloc in project_free:
     print_row([pid, storage_group[0], data_gb, quota_gb,
                files_usage[0] if files_usage else "",
                files_quota[0] if files_quota else "",
-               datetime.fromisoformat(last_updated[0]).strftime("%-d %b %H:%M") if last_updated else ""], is_header=False)
+               datetime.fromisoformat(last_updated[0]).strftime("%b %-d %H:%M") if last_updated else ""], is_header=False)
 EOF
 )
 }
