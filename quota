@@ -367,8 +367,9 @@ for alloc in compute_free:
         if len(parts) > 1:
             billing_hrs = int(parts[1]) // 60
     status = alloc["status"]
-    for count, raw in enumerate(get_attr(attrs, "slurm_rawusage")):
-        cluster, used_secs = raw.split("=")
+    for count, entry in enumerate(alloc["compute_usage"]):
+        cluster = entry["cluster"]
+        used_secs = entry["rawusage"]
         left = billing_hrs - int(used_secs) // 3600
         colors = [""] * 7
         note = ""
