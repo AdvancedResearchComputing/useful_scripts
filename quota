@@ -331,8 +331,6 @@ allocations = json.load(sys.stdin)
 compute_free = [a for a in allocations if a["resource"] == "Compute (Free)"]
 project_free  = [a for a in allocations if a["resource"] == "Project (Free)"]
 
-print_row(["USER", "FILESYS/SET", "DATA (GB)", "QUOTA (GB)", "FILES", "QUOTA", "LAST UPDATED"],
-          colors=[GREEN] * 7)
 for alloc in project_free:
     attrs = alloc["allocation_attribute"]
     storage_group = get_attr(attrs, "Storage_Group_Name")
@@ -345,7 +343,7 @@ for alloc in project_free:
     files_usage = get_attr(attrs, "ess_files_usage")
     files_quota = get_attr(attrs, "ess_files_quota")
     last_updated = get_attr(attrs, "ess_files_usage", "modified")
-    print_row([pid, storage_group[0], data_gb, quota_gb,
+    print_row([pid, f"/projects/{storage_group[0]}", data_gb, quota_gb,
                files_usage[0] if files_usage else "",
                files_quota[0] if files_quota else "",
                datetime.fromisoformat(last_updated[0]).strftime("%b %-d %H:%M") if last_updated else ""], is_header=False)
