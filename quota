@@ -328,10 +328,10 @@ def get_attr(attributes, attr_type, field="value"):
 
 pid = "$user"
 allocations = json.load(sys.stdin)
-compute_free = [a for a in allocations if a["resource"] == "Compute (Free)"]
-project_free  = [a for a in allocations if a["resource"] == "Project (Free)"]
+compute = [a for a in allocations if a["resource_type"] == "Cluster"]
+storage = [a for a in allocations if a["resource_type"] == "Storage"]
 
-for alloc in project_free:
+for alloc in storage:
     attrs = alloc["allocation_attribute"]
     storage_group = get_attr(attrs, "Storage_Group_Name")
     if not storage_group:
@@ -352,7 +352,7 @@ print()
 
 print_row(["USER", "ALLOCATION", "CLUSTER", "QUOTA (hrs)", "LEFT (hrs)", "STATUS", "NOTE"],
           colors=[GREEN] * 7)
-for alloc in compute_free:
+for alloc in compute:
     if alloc["status"] == "Revoked":
         continue
     attrs = alloc["allocation_attribute"]
