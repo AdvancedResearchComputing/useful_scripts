@@ -291,7 +291,7 @@ print_rest_api_quota() {
 	local user="$1"
 
 	local response=$(curl -sk -w "%{http_code}" "https://coldfront.arc.vt.edu/api/arc/quota/" \
-		-H "Authorization: Token $(cat ~/.arc_quota/token)" 2>/dev/null)
+		-H "Authorization: Token $(cat "/home/$user/$CACHE_DIR/token")" 2>/dev/null)
 	local http_code="${response: -3}"
 	local json="${response:0:-3}"
 	[ "$http_code" != "200" ] && return 1
