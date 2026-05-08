@@ -412,6 +412,7 @@ main() {
 	print_storage_header;
 	for user in $user_list; do
 		print_home_quota "$user"
+		echo
 		if ! print_rest_api_quota "$user"; then
 			print_ess_gpfs_quota "$user"
 			print_alloc_quotas "$user"
