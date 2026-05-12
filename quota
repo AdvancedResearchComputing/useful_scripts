@@ -2,11 +2,6 @@
 
 set -uo pipefail
 
-mmlsquota_bin="/usr/lpp/mmfs/bin/";
-lfs_bin="/opt/lustre/lustre/bin/";
-
-export PATH="$PATH:$mmlsquota_bin:$lfs_bin";
-
 CACHE_DIR=".arc_quota"
 
 RED=$(tput setaf 1);
@@ -37,19 +32,6 @@ usage() {
     $0 pid1 pid2 pid3
     $0 -h
   "
-}
-
-print_gpfs_quota() {
-	local user=$1
-
-	which mmlsquota >/dev/null 2>&1
-	[ "$?" -eq "0" ] || return;
-
-	echo
-	printf "$(print_padding HEADER_COLORS[@] 'header')" \
-			"" "GPFS" "" "" "" "" ""
-	print_gpfs_work_quota "$user"
-	print_gpfs_groups_quota "$user"
 }
 
 print_ess_gpfs_quota() {
@@ -130,7 +112,6 @@ print_alloc_quotas() {
 
 	print_alloc_header;
 
-	print_alloc_quota "$user" "moab"
 	print_alloc_quota "$user" "slurm"
 }
 
@@ -166,7 +147,7 @@ print_alloc_quota() {
 			colors[5]=${YELLOW};
 			colors[6]=${RED};
 		fi
-		if [ "$left" == "0.00" ]; then
+		if [ "$left" == "0" ]; then
 			note+="Allocation has no funds. ";
 			colors[1]=${YELLOW};
 			colors[2]=${YELLOW};
@@ -198,21 +179,7 @@ for (k, v) in json.load(sys.stdin).items():
 
 }
 
-print_gpfs_work_quota() {
-	local user=$1
-
-	which mmlsquota >/dev/null 2>&1
-	[ "$?" -eq "0" ] || return;
-
-	local quota=$(mmlsquota -u $user work 2> /dev/null)
-
-	local fs='/work'
-	[ -n "$quota" ] || return;
-
-	parse_quota "$quota" "/work"
-}
-
-parse_quota() {
+parse_storage_quota() {
 	local quota="$1"
 	local fs="$2"
 	[ -n "$quota" ] || return;
@@ -255,22 +222,6 @@ parse_quota() {
 		"$maximum_blocksize_GiB" "$current_files" "$maximum_files" "$note")
 
   print_row row[@] colors[@]
-}
-
-print_gpfs_groups_quota() {
-	local user=$1
-
-	which mmlsquota >/dev/null 2>&1
-	[ "$?" -eq "0" ] || return;
-
-	for u_group in $(groups "$user"); do
-		local group_path="/groups/$u_group/";
-		if [ -d "$group_path" ]; then
-			local d_group=$(stat -c %G "$group_path");
-			local quota=$(mmlsquota -j "$d_group" groups 2>/dev/null)
-			parse_quota "$quota" "$group_path"
-		fi
-	done
 }
 
 print_storage_header() {
@@ -336,6 +287,108 @@ bytes_to_GB() {
 	echo "$size_in_bytes / $bytes_in_GB" | bc -l
 }
 
+print_rest_api_quota() {
+	local user="$1"
+
+	local response=$(curl -sk -w "%{http_code}" "https://coldfront.arc.vt.edu/api/arc/quota/" \
+		-H "Authorization: Token $(cat "/home/$user/$CACHE_DIR/token")" 2>/dev/null)
+	local http_code="${response: -3}"
+	local json="${response:0:-3}"
+	[ "$http_code" != "200" ] && return 1
+	echo "$json" | python3 <(cat <<EOF
+import sys, json
+from datetime import datetime
+
+RED    = "\033[31m"
+GREEN  = "\033[32m"
+YELLOW = "\033[33m"
+NC     = "\033[0m"
+
+WIDTHS = [16, 36, 12, 11, 10, 10, None]
+
+def print_row(fields, colors=None, is_header=True):
+    if colors is None:
+        colors = [""] * 7
+    parts = []
+    for i, (val, width) in enumerate(zip(fields, WIDTHS)):
+        color = colors[i] if i < len(colors) else ""
+        if not is_header and i == 2:
+            text = f"{float(val):.1f}" if val != "" else ""
+        elif not is_header and i == 3:
+            if isinstance(val, str):
+                text = val
+            else:
+                text = "Infinity" if val < 0 else f"{float(val):.0f}"
+        else:
+            text = str(val)
+        if width is not None:
+            text = f"{text:<{width}}"
+        parts.append(f"{color}{text}{NC}")
+    print(" ".join(parts))
+
+def get_attr(attributes, attr_type, field="value"):
+    return [a[field] for a in attributes if a["allocation_attribute_type"] == attr_type and field in a]
+
+pid = "$user"
+allocations = json.load(sys.stdin)
+compute = [a for a in allocations if a["resource_type"] == "Cluster"]
+storage = [a for a in allocations if a["resource_type"] == "Storage"]
+
+for alloc in storage:
+    attrs = alloc["allocation_attribute"]
+    storage_group = get_attr(attrs, "Storage_Group_Name")
+    if not storage_group:
+        continue
+    usage = get_attr(attrs, "storage_usage")
+    data_gb = float(usage[0].split('/')[0]) * 1000 if usage else 0.0
+    quota = get_attr(attrs, "Storage Quota (GB)")
+    quota_gb = float(quota[0]) if quota else 0.0
+    files_usage = get_attr(attrs, "ess_files_usage")
+    files_quota = get_attr(attrs, "ess_files_quota")
+    last_updated = get_attr(attrs, "ess_files_usage", "modified")
+    print_row([pid, f"/projects/{storage_group[0]}", data_gb, quota_gb,
+               files_usage[0] if files_usage else "",
+               files_quota[0] if files_quota else "",
+               datetime.fromisoformat(last_updated[0]).strftime("%b %-d %H:%M") if last_updated else ""], is_header=False)
+
+print()
+
+print_row(["USER", "ALLOCATION", "CLUSTER", "QUOTA (hrs)", "LEFT (hrs)", "STATUS", "NOTE"],
+          colors=[GREEN] * 7)
+for alloc in compute:
+    if alloc["status"] == "Revoked":
+        continue
+    attrs = alloc["allocation_attribute"]
+    account = get_attr(attrs, "slurm_account_name")
+    if not account:
+        continue
+    raw_billing = int(alloc.get("compute_billing", 0))
+    unlimited = raw_billing < 0
+    billing_hrs = raw_billing // 60
+    status = alloc["status"]
+    for count, entry in enumerate(alloc["compute_usage"]):
+        cluster = entry["cluster"]
+        used_secs = entry["rawusage"]
+        left = billing_hrs - int(used_secs) // 3600
+        colors = [""] * 7
+        note = ""
+        if status == "Expired":
+            note += "Allocation has expired. "
+            colors[1] = colors[2] = colors[5] = YELLOW
+            colors[6] = RED
+        if not unlimited and left == 0:
+            note += "Allocation has no funds. "
+            colors[1] = colors[2] = colors[4] = YELLOW
+            colors[6] = RED
+        quota_col = "Infinity" if unlimited else billing_hrs
+        left_col = "Infinity" if unlimited else left
+        row = [pid, account[0], cluster, quota_col, left_col, status, note.strip()] \
+              if count == 0 else ["", "", cluster, quota_col, left_col, status, note.strip()]
+        print_row(row, colors)
+EOF
+)
+}
+
 
 main() {
   while getopts "dh" opt; do
@@ -362,11 +415,11 @@ main() {
 	print_storage_header;
 	for user in $user_list; do
 		print_home_quota "$user"
-
-		print_gpfs_quota "$user"
-		print_ess_gpfs_quota  "$user"
-
-		print_alloc_quotas "$user"
+		echo
+		if ! print_rest_api_quota "$user"; then
+			print_ess_gpfs_quota "$user"
+			print_alloc_quotas "$user"
+		fi
 	done
 
 }
