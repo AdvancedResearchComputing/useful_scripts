@@ -76,6 +76,38 @@ if [[ $original_args =~ "--gres=gpu" || $original_args =~ "--gres gpu" || $origi
     fi
 fi
 
+# Resolve the effective partition for QoS mapping & if the user passed -p or --partition, extract it from their args.
+if [[ ! " $original_args" == *" -p"* && ! " $original_args" == *" --partition"* ]]; then
+    effective_partition="$def_partition"
+else
+    effective_partition="$(echo "$original_args" | grep -oP '(?<=-p |--partition=|--partition )\S+')"
+fi
+
+# If QoS not specified by user, map the effective partition to its interactive QoS and inject it. 
+# Todo: (add mapping for new nodes & partitions)
+if [[ ! " $original_args" == *" --qos"* ]]; then
+    case "${SYSNAME}:${effective_partition}" in
+        tinkercliffs:normal_q)            def_qos="tc_normal_int" ;;
+        tinkercliffs:a100_normal_q)       def_qos="tc_a100_normal_int" ;;
+        tinkercliffs:h200_normal_q)       def_qos="tc_h200_normal_int" ;;
+        owl:normal_q)                     def_qos="owl_normal_int" ;;
+        falcon:v100_normal_q,t4_normal_q) def_qos="fal_v100_normal_int" ;;
+        falcon:v100_normal_q)             def_qos="fal_v100_normal_int" ;;
+        falcon:t4_normal_q)               def_qos="fal_t4_normal_int" ;;
+        falcon:a30_normal_q)              def_qos="fal_a30_normal_int" ;;
+        falcon:l40s_normal_q)             def_qos="fal_l40s_normal_int" ;;
+        *)
+            echo -e "${YELLOW} --- Warning:${NC} No interactive QoS mapping for ${SYSNAME}:${effective_partition}. Proceeding without --qos."
+            def_qos=""
+            ;;
+    esac
+
+    if [[ -n "$def_qos" ]]; then
+        echo -e "${YELLOW} --- No QoS specified:${NC} setting --qos=$def_qos"
+        extra_args="--qos=$def_qos $extra_args"
+    fi
+fi
+
 # Command to be run
 # Later arguments appear to be given priority so add user-provided
 # arguments second on the off chance of conflicts
