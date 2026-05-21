@@ -103,7 +103,8 @@ if [[ ! " $original_args" == *" --qos"* ]]; then
     esac
 
     if [[ -n "$def_qos" ]]; then
-        echo -e "${YELLOW} --- No QoS specified:${NC} setting --qos=$def_qos"
+        #uncomment to debug QoS mapping
+        # echo -e "${YELLOW} --- No QoS specified:${NC} setting --qos=$def_qos"
         extra_args="--qos=$def_qos $extra_args"
     fi
 fi
