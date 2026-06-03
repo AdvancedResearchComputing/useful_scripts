@@ -33,7 +33,6 @@ ALLOCTRES=$(sacct -j "$JID" -X -nP -o alloctres 2>/dev/null)
 JOB_STATE=$(sacct -j "$JID" -X -nP -o state 2>/dev/null | head -n 1)
 JOB_USER=$(sacct -j "$JID" -X -nP -o user 2>/dev/null | head -n 1)
 
-
 # pull cpu and gpu indices 
 SCONTROL_OUT="$(scontrol show job -d "$JID" 2>/dev/null || true)"
 
@@ -200,24 +199,31 @@ echo "${C}Time window (UTC):${R} from=$FROM_UTC to=$TO_PARAM"
 echo "${C}Nodes:${R} ${NUM_NODES:-Unknown}"
 echo
 
+case "$SYSNAME" in
+  falcon)
+    DASHBOARD_URL="https://dashboard.arc.vt.edu/d/ac5tx82/arc-cluster-node-efficiency-falcon"
+    ;;
+  owl)
+    DASHBOARD_URL="https://dashboard.arc.vt.edu/d/acgqw9w/arc-cluster-node-efficiency-owl"
+    ;;
+  tinkercliffs)
+    DASHBOARD_URL="https://dashboard.arc.vt.edu/d/ac4cwcb/arc-cluster-node-efficiency-tinkercliffs"
+    ;;
+  *)
+    echo "ERROR: Unknown cluster '$SYSNAME'"
+    exit 1
+    ;;
+esac
+
 for NN in $(scontrol show hostnames "$NL")
 do
-  if [[ $SYSNAME = "tinkercliffs" ]]
-  then
-    DS="prometheus-tc"
-  elif [[ $SYSNAME = "falcon" ]]
-  then
-    DS="prometheus-falcon"
-  else
-    DS="prometheus-owl"
-  fi
 
   #per-node CPU/GPU indices
   NN_CPU_IDS="${NODE_CPU_IDS[$NN]:-${CPU_IDS:-Unknown}}"
   NN_GPU_IDX="${NODE_GPU_IDX[$NN]:-${GPU_IDX:-Unknown}}"
 
   printf "%s:\n" "${C}${NN}${R}"
-  echo "  https://dashboard.arc.vt.edu/d/cej08t3a14lq8c/arc-cluster-node-efficiency?var-interval=1m&orgId=1&from=${FROM_UTC}&to=${TO_PARAM}&timezone=browser&var-datasource=${DS}&var-hostname=${NN}"
+  echo "  ${DASHBOARD_URL}?var-interval=1m&orgId=1&from=${FROM_UTC}&to=${TO_PARAM}&timezone=browser&var-hostname=${NN}"
   echo "  ${C}CPU IDs:${R} ${NN_CPU_IDS:-Unknown}"
   echo "  ${C}GPU IDX:${R} ${NN_GPU_IDX:-Unknown}"
   echo
