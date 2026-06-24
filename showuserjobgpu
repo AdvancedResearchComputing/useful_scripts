@@ -119,14 +119,31 @@ while IFS='|' read -r JOBID NODELIST JOBSTATE; do
         # can understand (e.g. “0,1,2,4”)
         GPU_IDS_FOR_NVIDIA_SMI=$(expand_gpu_ids_for_nvidia_smi "$GPU_IDS")
 
-        # Query *only* the GPUs that belong to the job
-        SMICMD="nvidia-smi -i $GPU_IDS_FOR_NVIDIA_SMI \
-            --query-gpu=index,utilization.gpu,memory.used,name \
-            --format=csv,noheader,nounits"
-        
-        # Run the command over SSH; quiet failures are turned into a warning.
-        if ! SSH_OUT=$(ssh -n -q -o ConnectTimeout=5 "$node" "$SMICMD" < /dev/null 2>/dev/null); then
-            echo "WARNING: failed to query nvidia-smi for JobID $JOBID on $node (GPU IDs: $GPU_IDS_FOR_NVIDIA_SMI)" >&2
+        # When Slurm cgroup device isolation (ConstrainDevices=yes) is enabled,
+        # a plain ssh session onto the node only sees the GPUs in whatever
+        # cgroup it lands in, and nvidia-smi -i <slurm-idx> fails with
+        # "No devices were found" because the visible indices are remapped
+        # to 0..N-1 inside the job's cgroup.
+        #
+        # For the current user's own jobs, run nvidia-smi *inside* the job's
+        # cgroup via `srun --jobid --overlap`, where the allocated GPU(s) are
+        # visible (and we must NOT pass -i with the Slurm index, since it is
+        # remapped). For other users' jobs, fall back to plain ssh with the
+        # Slurm index (best effort without job cgroup access).
+        if [[ "$TARGET_USER" == "$USER" ]]; then
+            SSH_OUT=$(timeout 60s srun --jobid="$JOBID" --overlap -w "$node" bash -c \
+                'nvidia-smi --query-gpu=index,utilization.gpu,memory.used,name --format=csv,noheader,nounits' \
+                </dev/null 2>/dev/null || true)
+        else
+            SMICMD="nvidia-smi -i $GPU_IDS_FOR_NVIDIA_SMI \
+                --query-gpu=index,utilization.gpu,memory.used,name \
+                --format=csv,noheader,nounits"
+            SSH_OUT=$(ssh -n -q -o ConnectTimeout=5 "$node" "$SMICMD" < /dev/null 2>/dev/null || true)
+        fi
+
+        # Empty output → either the query failed or no GPU was visible.
+        if [[ -z "$SSH_OUT" ]]; then
+            echo "WARNING: failed to query nvidia-smi for JobID $JOBID on $node (GPU IDs: $GPU_IDS)" >&2
             # Still print a row so the user knows the node was seen
             printf_row "$JOBID" "$node" "$JOBSTATE" "$GPU_IDS" "—" "—" "—" "—"
             continue
@@ -147,50 +164,3 @@ while IFS='|' read -r JOBID NODELIST JOBSTATE; do
     done
 done <<< "$JOBS" 
 } | column -t -s $'\t'
-
-# ------------------------------------------------------------
-# End of script
-# ------------------------------------------------------------
-
-
-#while IFS='|' read -r JOBID NODELIST JOBSTATE; do
-#    [ -z "${JOBID:-}" ] && continue
-#    [ -z "${NODELIST:-}" ] && continue
-#    [ -z "${JOBSTATE:-}" ] && continue
-#
-#    # If it's a job that is completing, report it and skip GPU query
-#    if [[ "$JOBSTATE" == "COMPLETING" || "$JOBSTATE" == "CG" ]]; then
-#        echo "------------------------------------------------"
-#        echo "JobID: $JOBID  |  NodeList: $NODELIST  |  State: $JOBSTATE"
-#        echo "------------------------------------------------"
-#        continue
-#    fi
-#
-#    NODES=$(scontrol show hostnames "$NODELIST" 2>/dev/null || true)
-#    if [ -z "${NODES:-}" ]; then
-#        echo "WARNING: could not expand nodes for JobID $JOBID (NODELIST=$NODELIST)" >&2
-#        continue
-#    fi
-#
-#    declare -A NODE_GPU_IDS
-#    parse_job_node_gpu_map "$JOBID"
-#
-#    for node in $NODES; do
-#        GPU_IDS="${NODE_GPU_IDS[$node]:-}"
-#
-#        if [ -z "${GPU_IDS:-}" ]; then
-#            continue
-#        fi
-#
-#        GPU_IDS_FOR_NVIDIA_SMI=$(expand_gpu_ids_for_nvidia_smi "$GPU_IDS")
-#
-#        echo "------------------------------------------------"
-#        echo "JobID: $JOBID  |  Node: $node"
-#        echo "Slurm Allocated GPU Index: $GPU_IDS"
-#        echo "------------------------------------------------"
-#
-#        if ! ssh -n -q -o ConnectTimeout=5 "$node" "nvidia-smi -i $GPU_IDS_FOR_NVIDIA_SMI --query-gpu=index,utilization.gpu,memory.used,name --format=csv,noheader" < /dev/null; then
-#            echo "WARNING: failed to query nvidia-smi for JobID $JOBID on node $node (GPU IDs: $GPU_IDS_FOR_NVIDIA_SMI)" >&2
-#        fi
-#    done
-#done <<< "$JOBS"
