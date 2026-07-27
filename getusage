@@ -117,7 +117,7 @@ getAccountUsage() {
     parent=$(sacctmgr show assoc where account="$1" format=parentname -np cluster="$2" | grep -v "^|" | tr -d "|")
    
     if [[ "$parent" == "" ]]; then
-      echo "ERROR: Account $1 account doesn't exist"
+      echo "ERROR: Account $1 doesn't exist"
       exit 0
     fi
     

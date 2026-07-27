@@ -1,6 +1,6 @@
 ## Admin: deploying updates/changes for `useful_scripts`
 
-This read me explains how the deploy_useful_scripts helps keep `/apps/common/useful_scripts` in sync with the GitHub repository.
+This README explains how the deploy_useful_scripts helps keep `/apps/common/useful_scripts` in sync with the GitHub repository.
 
 The deploy_useful_scripts script:
 
@@ -50,7 +50,7 @@ chmod +x admin/deploy_useful_scripts.sh
 ### 3. Deploying changes  (just 3 steps)
 
 
-From the your home directory:
+From your home directory:
 ```bash
 cd ~/arc_repos/useful_scripts_repo
 

@@ -121,7 +121,7 @@ echo -e "${RED} --- Warning:${NC}"
 echo "     Your session consumes resources (CPUs, memory, and GPUs) while it remains open."
 echo "     Close your session whenever you finish your work."
 echo "     Other users cannot use the resources allocated to your job until you close your session."
-echo "     Consider the use of batch jobs to optimize resources allocation."
+echo "     Consider the use of batch jobs to optimize resource allocation."
 
 # Run
 $cmd
