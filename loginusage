@@ -4,7 +4,7 @@ _user_=`id -u $1`
 echo "Showing login usage for user=$_user_"
 sleep 1
 
-# validate that we have a valid uid to work with, but supress all output
+# validate that we have a valid uid to work with, but suppress all output
 id -un ${_user_} >/dev/null 2>&1
 
 # if "id" was successful, run systemd-cgtop to show the user's control group slice on the login node, otherwise quit

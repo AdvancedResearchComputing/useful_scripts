@@ -189,7 +189,7 @@ function getAccountUserUsage {
   for ii in `seq 0 $((NPart-1))`
   do
     BUSE=0; CUSE=0; GUSE=0 
-    # BUSE (billing) set for all partitons types. CUSE (cpu) or GUSE (gpu) set depending on partition type 
+    # BUSE (billing) set for all partitions types. CUSE (cpu) or GUSE (gpu) set depending on partition type 
     getAccountUserPartitionUsage $ACCT $UN ${PL[$ii]}
     BTOT=$((BTOT+BUSE));  CTOT=$((CTOT+CUSE));
     case ${PL[$ii]} in
@@ -246,7 +246,7 @@ function getAccountUserPartitionUsage {
   read STR < <(grep -A 7 "$ACCT\ .*$UN(.*$PART\ " $FN | tail -n 1)
   if [[ -z "$STR" ]]
   then
-    [[ $DEBUGFLAG ]] && echo "No assocation output for $ACCT $UN $PART"
+    [[ $DEBUGFLAG ]] && echo "No association output for $ACCT $UN $PART"
     FLAG="NoPartData"
     echo -e "" | awk '{ printf ""}'
     return 1
@@ -290,7 +290,7 @@ function getAccountTotals {
   read STR < <(grep -A 7 "$ACCT\ .*UserName=\ .*tion=\ " $FN | tail -n 1)
   if [[ -z "$STR" ]]
   then
-    [[ $DEBUGFLAG ]] && echo "No assocation output for $ACCT with blank Username and blank Partition"
+    [[ $DEBUGFLAG ]] && echo "No association output for $ACCT with blank Username and blank Partition"
     continue
   fi
   PATTERN="GrpTRESMins=cpu"

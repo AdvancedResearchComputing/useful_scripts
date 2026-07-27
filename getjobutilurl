@@ -140,7 +140,7 @@ fi
 
 # Normalize Slurm times to UTC
 # - sacct reports local time
-# - currently grafana expects UTC for timestamps (the workaround is using broswer time in grafana)
+# - currently grafana expects UTC for timestamps (the workaround is using browser time in grafana)
 to_utc_z() {
   local t="$1"
 

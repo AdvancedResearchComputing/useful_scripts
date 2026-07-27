@@ -20,7 +20,7 @@ usage() {
     for the current user for the filesystems configured on the current
     system.
 
-    A list of users may be optionally supplied and thier quota information
+    A list of users may be optionally supplied and their quota information
     will be displayed. Displaying quota information for any user other
     than the current user requires sudo or root privileges.
 
