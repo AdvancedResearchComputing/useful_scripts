@@ -265,10 +265,18 @@ getAccountUsage() {
 
 # Perform action based on input
 if [[ -n "$ACCOUNT" ]]; then
+
+  # Direct queries for the personal account are no longer supported.
   if [ "$ACCOUNT" == "personal" ]; then
-    echo "Personal accounts are restricted for testing during the first 90 days. Users need to be added to an allocation owned by a PI"
+    echo "ERROR: The personal Slurm account has been decommissioned and is no longer available."
     exit 0
   fi
+
+  # decommissioned personal-account(just retained for reference):
+  # if [ "$ACCOUNT" == "personal" ]; then
+  #   echo "Personal accounts are restricted for testing during the first 90 days. Users need to be added to an allocation owned by a PI"
+  #   exit 0
+  # fi
       
   for cluster in tinkercliffs owl falcon; do
       if [[ -n "$CLUSTER" && "$CLUSTER" != "$cluster" ]]; then
@@ -278,22 +286,31 @@ if [[ -n "$ACCOUNT" ]]; then
       getAccountUsage "${ACCOUNT}" "$cluster"
       echo
   done
+
 elif [[ -n "$USER" ]]; then
-  accounts=$(sacctmgr show assoc where user=${USER} format=account -nP cluster=tinkercliffs)
   for cluster in tinkercliffs owl falcon; do
       if [[ -n "$CLUSTER" && "$CLUSTER" != "$cluster" ]]; then
           continue
       fi
+
+      # query account associations for the cluster currently being processed (same as before).
+      accounts=$(sacctmgr show assoc where user="${USER}" format=account -nP cluster="$cluster")
+
       echo "Cluster: $cluster"
+
       for ACCOUNT in $accounts; do
+
+        # hide stale personal associations while backend cleanup is ongoing.
         if [ "$ACCOUNT" == "personal" ]; then
           continue
         fi
-        getAccountUsage "$ACCOUNT" $cluster
+
+        getAccountUsage "$ACCOUNT" "$cluster"
         echo
       done
       echo
   done
+
 elif [[ -n "$PI" ]]; then
   for cluster in tinkercliffs owl falcon; do
     if [[ -n "$CLUSTER" && "$CLUSTER" != "$cluster" ]]; then
@@ -332,13 +349,17 @@ elif [[ -n "$PI" ]]; then
     printf "    PI available: %'12.2f (%s%%) --> Service Units shared among all PI's accounts\n" "$avail_hrs" "$avail_pct"
     echo
 
-    children=$(sacctmgr show assoc format=account,parentname,grpsubmit -np cluster=tinkercliffs | awk -F'|' -v parentname="__${PI}__" '$2 == parentname && $3 != 0 {print $1}')
+    # Query child accounts for the cluster currently being processed.
+    children=$(sacctmgr show assoc format=account,parentname,grpsubmit -np cluster="$cluster" | awk -F'|' -v parentname="__${PI}__" '$2 == parentname && $3 != 0 {print $1}')
 
     for ACCOUNT in $children; do
+
+        # stash stale personal associations 
         if [ "$ACCOUNT" == "personal" ]; then
           continue
         fi
-        getAccountUsage "$ACCOUNT" $cluster
+
+        getAccountUsage "$ACCOUNT" "$cluster"
         echo
     done
     echo
