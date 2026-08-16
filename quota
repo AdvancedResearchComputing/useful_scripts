@@ -34,55 +34,6 @@ usage() {
   "
 }
 
-print_ess_gpfs_quota() {
-    local user=$1
-    local projects_cache="/home/$user/$CACHE_DIR/projects"
-    if [ -s "$projects_cache" ]; then
-        echo
-
-        local last_updated="$(ls -l "$projects_cache" | awk '{print $6, $7, $8}')"
-        json=$(cat "$projects_cache")
-        while read line; do
-            local colors=('' '' '' '' '' '' '')
-            local path=$(echo $line | awk -F\| '{print $1}')
-            local num_fields=$(awk -F\| '{print NF}' <<< "$line")
-
-            # If account is expired
-            if [ "$num_fields" -lt 3 ]; then
-		local row=("$user" "$path" "0" "0" "EXPIRED" "EXPIRED" "$last_updated")
-                print_row row[@] colors[@]
-                continue
-            fi
-
-	    local block_usage_kib=$(echo $line | awk -F\| '{print $2}');
-	    local block_quota_kib=$(echo $line | awk -F\| '{print $3}');
-
-	    local block_usage_gib=$(KiB_to_GB "$block_usage_kib")
-	    local block_quota_gib=$(KiB_to_GB "$block_quota_kib")
-
-	    local files_usage=$(echo $line | awk -F\| '{print $4}');
-	    local files_quota=$(echo $line | awk -F\| '{print $5}');
-
-            local row=("$user" "$path" "$block_usage_gib" "$block_quota_gib" "$files_usage" "$files_quota" "$last_updated")
-            print_row row[@] colors[@]
-
-        done < <(cat "$projects_cache" | python3 <( echo '
-import sys, json
-for k, v in json.load(sys.stdin).items():
-    path = k
-    block_usage = v.get("blockUsage", 0)
-    block_quota = v.get("blockQuota", 0)
-    files_usage = v.get("filesUsage", 0)
-    files_quota = v.get("filesQuota", 0)
-    if block_usage == 0 and block_quota == 0 and files_usage == 0 and files_quota == 0:
-        print(f"{path}|{path}")
-    else:
-        print(f"{path}|{block_usage}|{block_quota}|{files_usage}|{files_quota}")
-'))
-    fi
-}
-
-
 print_home_quota() {
 	local user=$1
 
@@ -105,78 +56,6 @@ print_home_quota() {
 	local colors=('' '' '' '' '' '' '')
 	local row=("$user" "/home" "$usage_GiB" "$limit_GiB" "-" "-" "$last_updated")
 	print_row row[@] colors[@];
-}
-
-print_alloc_quotas() {
-	local user=$1
-
-	print_alloc_header;
-
-	print_alloc_quota "$user" "slurm"
-}
-
-print_alloc_quota() {
-	local user="$1";
-	local alloc_type="$2";
-
-	local json="";
-	local alloc_cache="/home/$user/$CACHE_DIR/$alloc_type";
-	[ -s "$alloc_cache" ] && json=$(cat "$alloc_cache");
-
-	[ -z "$json" ] && return; # skip when response is empty
-
-	while read line; do
-		local pid=$(echo $line | awk -F\| '{print $1}');
-		local alloc=$(echo $line | awk -F\| '{print $2}');
-		local cluster=$(echo $line | awk -F\| '{print $3}');
-		local quota=$(echo $line | awk -F\| '{print $4}');
-		local left=$(echo $line | awk -F\| '{print $5}');
-		local status=$(echo $line | awk -F\| '{print $6}');
-
-		local colors=('' '' '' '' '' '' '')
-
-		local note="";
-		local now_epoch=0;
-		if [ "$status" == "Revoked" ]; then
-			continue;
-		fi
-		if [ "$status" == "Expired" ]; then
-			note+="Allocation has expired. ";
-			colors[1]=${YELLOW};
-			colors[2]=${YELLOW};
-			colors[5]=${YELLOW};
-			colors[6]=${RED};
-		fi
-		if [ "$left" == "0" ]; then
-			note+="Allocation has no funds. ";
-			colors[1]=${YELLOW};
-			colors[2]=${YELLOW};
-			colors[4]=${YELLOW};
-			colors[6]=${RED};
-		fi
-
-		printf "$(print_padding colors[@] 'header')" \
-			"$pid" "$alloc" "$cluster" "$quota" "$left" "$status" "$note";
-
-	done < <(cat "$alloc_cache" | python <( echo '
-from __future__ import print_function;
-import sys, json;
-for (k, v) in json.load(sys.stdin).items(): 
-	i=0;
-	status = ""
-	if "status" in v:
-		status = v["status"];
-	for f in v["funds"]: 
-		alloc = f["allocated"];
-		remain = f["remaining"];
-
-		if i == 0: 
-			print("'$user'"+"|"+k+"|"+f["cluster"]+"|"+alloc+"|"+remain+"|"+status+"|")
-		else:
-			print("||"+f["cluster"]+"|" + alloc+"|"+remain+"|"+status+"|");
-		i += 1;
-'))
-
 }
 
 parse_storage_quota() {
@@ -227,12 +106,6 @@ parse_storage_quota() {
 print_storage_header() {
 	printf "$(print_padding HEADER_COLORS[@] 'header')" \
 		"USER" "FILESYS/SET" "DATA (GB)" "QUOTA (GB)" "FILES" "QUOTA" "LAST UPDATED"
-}
-
-print_alloc_header() {
-	echo;
-	printf "$(print_padding HEADER_COLORS[@] 'header')" \
-		"USER" "ALLOCATION" "CLUSTER" "QUOTA (hrs)" "LEFT (hrs)" "STATUS" "NOTE";
 }
 
 print_row() {
@@ -293,8 +166,13 @@ print_rest_api_quota() {
 	local response=$(curl -sk -w "%{http_code}" "https://coldfront.arc.vt.edu/api/arc/quota/" \
 		-H "Authorization: Token $(cat "/home/$user/$CACHE_DIR/token")" 2>/dev/null)
 	local http_code="${response: -3}"
-	local json="${response:0:-3}"
-	[ "$http_code" != "200" ] && return 1
+	if [ "$http_code" != "200" ]; then
+		local detail="HTTP $http_code"
+		[ -z "$response" ] && detail="no response from server"
+		echo -e "${RED}Error: could not retrieve project storage and compute usage for $user from ColdFront ($detail).${NC}" >&2
+		return 1
+	fi
+	local json="${response%???}"
 	echo "$json" | python3 <(cat <<EOF
 import sys, json
 from datetime import datetime
@@ -413,15 +291,14 @@ main() {
 
         echo -e "${YELLOW}Warning: quota values are not updated in real time and may take a few hours to refresh.${NC}"
 	print_storage_header;
+	local rc=0
 	for user in $user_list; do
 		print_home_quota "$user"
 		echo
-		if ! print_rest_api_quota "$user"; then
-			print_ess_gpfs_quota "$user"
-			print_alloc_quotas "$user"
-		fi
+		print_rest_api_quota "$user" || rc=1
 	done
 
+	return $rc
 }
 
 main "$@"
