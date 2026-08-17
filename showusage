@@ -257,8 +257,13 @@ function getAccountUserPartitionUsage {
   read CLIM < <(echo $CPU | cut -d" " -f1);  read CUSE < <(echo $CPU | cut -d" " -f2)
 }
 
+
+# ----------------------------------------------------------------------
+# personal Slurm account decommissioned.
+# this function is no longer called by showusage. (only retained for reference)
+# ----------------------------------------------------------------------
 function getUserAcctTotal {
-  # This is really only used for the personal account printout
+  # This was only used for the personal account printout (method called only here "$ACCT" = "personal")
   UN=$1; ACCT=$2;
   read STR < <(grep -A 7 "$ACCT\ .*$UN(.*tion\= " $FN | tail -n 1)
   read BILL < <(echo $STR |  cut -d, -f5 | cut -d= -f2 |  tr -d \) | tr \( " ")
@@ -418,27 +423,46 @@ fi
 
   for ACCT in $ACCTLIST
   do
+
+    # Personal Slurm account decommissioned 
+    # any personal account requests receive a decommission message.
+
+    if [[ "$ACCT" == "personal" ]]
+    then
+      if [[ $AFLAG ]]
+      then
+        echo "ERROR: Personal Slurm account has been decommissioned and is no longer available."
+      fi
+      continue
+    fi
+
     validateAccount
     #/usr/bin/time -f %E scontrol show assoc account=$ACCT flags=assoc >> $FN
     #if [[ "$ACCT" == "tcfriendly" ]]
     #then
     #  [[ $DEBUGFLAG ]] && echo "skipping tcfriendly account"
     #  continue
-    if [[ "$ACCT" = "personal" ]]
-    then
-      if [[ $VFLAG == "1" ]] || [[ $VFLAG == "2" ]]
-      then
-        printAcctHead $ACCT
-      fi
-      getUserAcctTotal $INPUTUSER $ACCT
-    else
-      if [[ $VFLAG == "1" ]] || [[ $VFLAG == "2" ]]
-      then
-        echo
-        getAccountUsage $ACCT
-        printHBar
-      fi
-      getAccountTotals $ACCT
-    fi
-  done
 
+    # Historical personal-account handling.
+    # Personal Slurm account decommissioned.
+    #
+    # if [[ "$ACCT" = "personal" ]]
+    # then
+    #   if [[ $VFLAG == "1" ]] || [[ $VFLAG == "2" ]]
+    #   then
+    #     printAcctHead $ACCT
+    #   fi
+    #   getUserAcctTotal $INPUTUSER $ACCT
+    # else
+
+    if [[ $VFLAG == "1" ]] || [[ $VFLAG == "2" ]]
+    then
+      echo
+      getAccountUsage $ACCT
+      printHBar
+    fi
+    getAccountTotals $ACCT
+
+    # fi
+
+  done
