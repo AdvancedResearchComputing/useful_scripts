@@ -16,6 +16,9 @@
 //     the service account's -- and it does not pretend to. What still binds
 //     it is the token: one fileset, obtainable only with that user's own
 //     ColdFront credential.
+//   - The repair is done on file descriptors, never on paths, so a project
+//     member swapping a file for a symlink mid-walk changes nothing. See
+//     repair.go for why `find -exec chmod` cannot be made safe.
 //   - One cluster-wide lock per fileset bounds duplicate work. Not a jti
 //     replay store: the repair is idempotent and the holder can mint a fresh
 //     token at will, so replay protection would restrict the authorised party
@@ -40,6 +43,14 @@ import (
 	"time"
 	"unsafe"
 )
+
+// repairTestHook is threaded into the repairer so tests can attack the
+// check-to-act window. Nil in the shipped binary.
+var repairTestHook func(dirfd int, name string)
+
+// lookupGroupGID is indirected so tests can hand the walker a gid without a
+// resolvable group on the box.
+var lookupGroupGID = lookupGID
 
 // isTerminal asks the kernel, not the file mode. /dev/null is a character
 // device too, and a service handing us an empty stdin must not be told it is
@@ -100,12 +111,22 @@ func run(ctx context.Context, stdin io.Reader, stdinIsTTY, apply bool, args []st
 		"jti": c.ID, "sub": c.Subject, "fileset": c.Fileset, "role": c.Role, "project_id": c.ProjectID,
 	}
 
-	target, err := resolveTarget(c.Fileset)
+	group := posixGroupPrefix + c.Fileset
+	gid, err := lookupGroupGID(group)
+	if err != nil {
+		fields["reason"], fields["error"] = "group-unresolvable", err
+		audit.warn("denied", fields)
+		return exitConfig
+	}
+	fields["group"], fields["gid"] = group, gid
+
+	root, rootSt, err := openTarget(c.Fileset)
 	if err != nil {
 		fields["reason"], fields["error"] = "bad-target", err
 		audit.warn("denied", fields)
 		return exitConfig
 	}
+	defer root.Close()
 
 	lock, err := acquireLock(c.Fileset)
 	if err != nil {
@@ -124,22 +145,29 @@ func run(ctx context.Context, stdin io.Reader, stdinIsTTY, apply bool, args []st
 	defer stopHB()
 	go lock.heartbeat(hbCtx, heartbeatInterval)
 
-	argv := repairArgv(target, c.Fileset)
-	fields["command"] = shellWords(argv)
+	fields["target"] = root.Name()
 
 	if !apply {
 		fields["mode"] = "dry-run"
 		audit.info("granted", fields)
-		fmt.Fprintf(stdout, "DRY-RUN would run: %s\n", shellWords(argv))
+		fmt.Fprintf(stdout, "DRY-RUN would walk %s: group -> %s (gid %d), mode g+rwXs, on files and directories only, "+
+			"symlinks and other devices skipped, only entries not already correct touched\n", root.Name(), group, gid)
 		return exitOK
 	}
 
 	fields["mode"] = "apply"
 	audit.info("granted", fields)
-	err = runRepair(ctx, argv, stdout, stderr)
+	r := &repairer{gid: gid, testHook: repairTestHook}
+	err = r.run(ctx, root, rootSt)
 	fields["duration"] = since(started)
+	fields["stats"] = r.stats.String()
 	if err != nil {
-		fields["outcome"], fields["error"] = "failed", err
+		fields["outcome"], fields["error"] = "interrupted", err
+		audit.warn("completed", fields)
+		return exitRepair
+	}
+	if r.stats.errors > 0 {
+		fields["outcome"] = "partial"
 		audit.warn("completed", fields)
 		return exitRepair
 	}

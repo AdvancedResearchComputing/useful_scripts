@@ -23,12 +23,12 @@ deployment owes it before it can do anything.
 4. Takes `/gpfs/fs1/.arc-authz-locks/<fileset>` with `O_CREAT|O_EXCL`, which
    GPFS makes atomic cluster-wide. Heartbeats its mtime while it runs; a lock
    nobody has touched for five minutes is breakable from any host.
-5. Runs the repair -- the same operation the removal-triggered celery path has
-   run in production for years, over the whole fileset, with `-xdev`:
-   ```
-   /usr/bin/find /gpfs/fs1/projects/<fileset> -xdev ! -type l \
-       -exec /usr/bin/chmod g+rwXs {} + -exec /usr/bin/chown :arc.<fileset> {} +
-   ```
+5. Walks the fileset **on file descriptors, never on paths**, and brings every
+   regular file and directory on the same device to `:arc.<fileset>` and
+   `g+rwXs` -- the same end state the removal-triggered celery command has
+   produced for years, proven equal by test, touching only entries that are
+   not already right. Symlinks, FIFOs, sockets and device nodes are skipped;
+   nothing is ever followed. See *Why not `find`* below.
 6. Logs one `key=value` line per decision to syslog, carrying the token's
    `jti`. ColdFront logs the same `jti` when it mints, and Splunk joins the two.
 
@@ -36,6 +36,34 @@ deployment owes it before it can do anything.
 the lock, prints the exact command it would run, and exits 0 without touching
 a file. That is phase 3 of the rollout, and it is not optional: a verifier
 that has never been observed rejecting a bad token has not been tested.
+
+## Why not `find -exec chmod … -exec chown …`
+
+Because it is a root compromise waiting for a project member to request a
+repair. `find` lstat()s a path, decides it is a regular file, and hands the
+*path* to `chmod` and `chown` -- which follow symlinks. Between the check and
+the action, a member of the project swaps `data/foo` for a symlink to
+`/etc/shadow`, and root has just handed the project group read-write on it.
+`-exec {} +` batches hundreds of paths per exec, so the window is wide, and
+this binary runs **on demand**, so the attacker chooses when. No shell tool
+closes it: there is no `lchmod` on Linux, so `chmod` always follows.
+
+So the walk never acts on a path after checking it. Every entry is opened
+`O_PATH|O_NOFOLLOW` and pinned to its inode by the descriptor; `fstat` on that
+descriptor is the only check; `fchownat(AT_EMPTY_PATH)` and `chmod` via
+`/proc/self/fd/N` are the only actions, and both address the descriptor. A
+subdirectory is re-opened `O_DIRECTORY|O_NOFOLLOW` and its `dev`/`ino` compared
+against the inspection before the walk descends; one that moved underneath is
+skipped, loudly. `go test` includes both attacks -- a file swapped for a
+symlink mid-walk, and a directory swapped mid-walk -- and asserts the target
+is untouched.
+
+Two deliberate differences from the celery command, both improvements:
+`chown` runs before `chmod`, because root's `chown` clears setgid on a
+group-executable file and the old order lost the `s` bit on every executable
+it touched; and special files are skipped rather than chmod'ed, since a project
+repair needs nothing from a FIFO and a root process has no business opening
+one (it would block forever).
 
 ## What it refuses, always
 
@@ -79,8 +107,10 @@ podman run --rm -v "$PWD:/src" -w /src docker.io/library/golang:1.24 \
     sh -c 'go vet ./... && go test ./... && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/fix-project-perms .'
 ```
 
-With one: `make vet test build`. The result is static; it needs nothing on the
-host but `/usr/bin/find`, `chmod` and `chown`.
+With one: `make vet test build`. The result is static; on the host it needs
+`/proc` mounted and `/usr/bin/getent` (the `arc.*` groups come from sssd,
+which a static binary cannot reach through `os/user`). The tests that chown
+need root, and skip cleanly otherwise -- run them in the container.
 
 ## Installing -- read this part
 

@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -85,34 +86,83 @@ func (tr *trust) valid(t *testing.T) string {
 	return tr.sign(t, baseClaims(), testKID)
 }
 
-// fakeFind installs a stand-in for /usr/bin/find that records its argv to
-// recordPath and exits with code. The environment is scrubbed by runRepair,
-// so the record path is baked into the script rather than read from env.
-func fakeFind(t *testing.T, code int) (recordPath string) {
+// requireRoot skips a test that needs to chown. The golang container runs
+// as root; a developer running go test unprivileged gets a skip, not a lie.
+func requireRoot(t *testing.T) {
 	t.Helper()
-	dir := t.TempDir()
-	recordPath = filepath.Join(dir, "argv")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + recordPath + "\nexit " + itoa(code) + "\n"
-	bin := filepath.Join(dir, "find")
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to chown")
 	}
-	prev := findBin
-	findBin = bin
-	t.Cleanup(func() { findBin = prev })
-	return recordPath
 }
 
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
+// The gid every repair in these tests targets. Arbitrary and unresolvable on
+// purpose: the walker takes a gid, and resolving the name is tested apart.
+const testGID = 4242
+
+func useTestGID(t *testing.T) {
+	t.Helper()
+	prev := lookupGroupGID
+	lookupGroupGID = func(string) (uint32, error) { return testGID, nil }
+	t.Cleanup(func() { lookupGroupGID = prev })
+}
+
+// treeFile creates a regular file under the arcadm fileset with the given
+// raw mode bits (setgid included); group is whatever the test process's is.
+func treeFile(t *testing.T, rel string, mode uint32) string {
+	t.Helper()
+	p := filepath.Join(projectsRoot, "arcadm", rel)
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
 	}
-	s := ""
-	for i > 0 {
-		s = string(rune('0'+i%10)) + s
-		i /= 10
+	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	return s
+	// syscall.Chmod, not os.Chmod: os.FileMode keeps setgid in a high bit,
+	// so os.Chmod(p, 0o2660) silently drops it and a fixture meant to be
+	// "already correct" is not.
+	if err := syscall.Chmod(p, mode); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func treeDir(t *testing.T, rel string, mode uint32) string {
+	t.Helper()
+	p := filepath.Join(projectsRoot, "arcadm", rel)
+	if err := os.MkdirAll(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Chmod(p, mode); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func lstatOf(t *testing.T, p string) syscall.Stat_t {
+	t.Helper()
+	var st syscall.Stat_t
+	if err := syscall.Lstat(p, &st); err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
+func permOf(t *testing.T, p string) uint32 { return lstatOf(t, p).Mode & 0o7777 }
+func gidOf(t *testing.T, p string) uint32  { return lstatOf(t, p).Gid }
+
+// repairArcadm runs the walker over the fixture fileset with an optional hook.
+func repairArcadm(t *testing.T, hook func(dirfd int, name string)) *repairer {
+	t.Helper()
+	root, st, err := openTarget("arcadm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	r := &repairer{gid: testGID, testHook: hook}
+	if err := r.run(context.Background(), root, st); err != nil {
+		t.Fatal(err)
+	}
+	return r
 }
 
 func tempFile(t *testing.T) *os.File {

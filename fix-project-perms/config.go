@@ -24,9 +24,11 @@ var (
 	// Created by deployment, never by this binary -- see acquireLock.
 	lockDir = "/gpfs/fs1/.arc-authz-locks"
 
-	findBin  = "/usr/bin/find"
-	chmodBin = "/usr/bin/chmod"
-	chownBin = "/usr/bin/chown"
+	// The one thing still exec'd, and only for a read-only NSS lookup: the
+	// arc.<fileset> groups come from LDAP through sssd, which a static Go
+	// binary cannot reach through os/user. The argument is a group name that
+	// has already passed nameRegexp, so nothing here reaches a shell.
+	getentBin = "/usr/bin/getent"
 )
 
 const (

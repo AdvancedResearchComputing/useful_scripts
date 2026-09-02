@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,17 +55,18 @@ func TestBadTokenIsRefusedAndLogged(t *testing.T) {
 
 func TestDryRunVerifiesLocksPrintsAndTouchesNothing(t *testing.T) {
 	tr := setup(t)
-	record := fakeFind(t, 0)
+	useTestGID(t)
+	f := treeFile(t, "f", 0o600)
 
 	code, stdout, stderr := drive(t, tr.valid(t), false, false, nil)
 	if code != exitOK {
 		t.Fatalf("code %d, stderr %s", code, stderr)
 	}
-	if !strings.Contains(stdout, "DRY-RUN would run:") || !strings.Contains(stdout, filepath.Join(projectsRoot, "arcadm")) {
+	if !strings.Contains(stdout, "DRY-RUN would walk") || !strings.Contains(stdout, filepath.Join(projectsRoot, "arcadm")) {
 		t.Fatalf("dry-run output: %q", stdout)
 	}
-	if _, err := os.Stat(record); err == nil {
-		t.Fatal("dry-run executed find")
+	if permOf(t, f) != 0o600 {
+		t.Fatal("dry-run modified a file")
 	}
 	if !strings.Contains(stderr, "decision=granted") || !strings.Contains(stderr, "mode=dry-run") || !strings.Contains(stderr, "jti=0f1c0f1c0f1c") {
 		t.Fatalf("grant not audited with jti: %q", stderr)
@@ -75,23 +77,22 @@ func TestDryRunVerifiesLocksPrintsAndTouchesNothing(t *testing.T) {
 }
 
 func TestApplyRunsTheRepairAndReleasesTheLock(t *testing.T) {
+	requireRoot(t)
 	tr := setup(t)
-	record := fakeFind(t, 0)
+	useTestGID(t)
+	f := treeFile(t, "f", 0o640)
 
 	code, _, stderr := drive(t, tr.valid(t), false, true, nil)
 	if code != exitOK {
 		t.Fatalf("code %d, stderr %s", code, stderr)
 	}
-	argv, err := os.ReadFile(record)
-	if err != nil {
-		t.Fatal("find was not executed")
+	if got := permOf(t, f); got != 0o2660 {
+		t.Fatalf("mode %#o after apply", got)
 	}
-	for _, want := range []string{filepath.Join(projectsRoot, "arcadm"), "-xdev", ":arc.arcadm", "g+rwXs"} {
-		if !strings.Contains(string(argv), want) {
-			t.Fatalf("find argv missing %q:\n%s", want, argv)
-		}
+	if got := gidOf(t, f); got != testGID {
+		t.Fatalf("gid %d after apply", got)
 	}
-	if !strings.Contains(stderr, "decision=completed") || !strings.Contains(stderr, "outcome=ok") {
+	if !strings.Contains(stderr, "decision=completed") || !strings.Contains(stderr, "outcome=ok") || !strings.Contains(stderr, "changed=") {
 		t.Fatalf("completion not audited: %q", stderr)
 	}
 	if lockExists() {
@@ -99,24 +100,38 @@ func TestApplyRunsTheRepairAndReleasesTheLock(t *testing.T) {
 	}
 }
 
-func TestApplyReportsAFailedRepairAndStillReleases(t *testing.T) {
+func TestApplyReportsPartialFailureAndStillReleases(t *testing.T) {
+	requireRoot(t)
 	tr := setup(t)
-	fakeFind(t, 3)
+	useTestGID(t)
+	treeDir(t, "dswap", 0o700)
+	treeFile(t, "dswap/child", 0o600)
+	prev := repairTestHook
+	repairTestHook = func(dirfd int, name string) {
+		if name == "dswap" {
+			base := fmt.Sprintf("/proc/self/fd/%d/", dirfd)
+			_ = os.Rename(base+"dswap", base+"dswap.moved")
+			_ = os.Mkdir(base+"dswap", 0o700)
+		}
+	}
+	t.Cleanup(func() { repairTestHook = prev })
+
 	code, _, stderr := drive(t, tr.valid(t), false, true, nil)
 	if code != exitRepair {
-		t.Fatalf("code %d", code)
+		t.Fatalf("code %d, stderr %s", code, stderr)
 	}
-	if !strings.Contains(stderr, "outcome=failed") {
-		t.Fatalf("failure not audited: %q", stderr)
+	if !strings.Contains(stderr, "outcome=partial") {
+		t.Fatalf("partial outcome not audited: %q", stderr)
 	}
 	if lockExists() {
-		t.Fatal("lock leaked after a failed repair")
+		t.Fatal("lock leaked after a partial repair")
 	}
 }
 
 func TestBusyFilesetIsRefusedWithoutWalking(t *testing.T) {
 	tr := setup(t)
-	record := fakeFind(t, 0)
+	useTestGID(t)
+	f := treeFile(t, "f", 0o600)
 	held, err := acquireLock("arcadm")
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +142,7 @@ func TestBusyFilesetIsRefusedWithoutWalking(t *testing.T) {
 	if code != exitBusy || !strings.Contains(stderr, "reason=already-running") {
 		t.Fatalf("code %d, stderr %q", code, stderr)
 	}
-	if _, err := os.Stat(record); err == nil {
+	if permOf(t, f) != 0o600 {
 		t.Fatal("walked a fileset that was already locked")
 	}
 	if !lockExists() {
@@ -135,8 +150,24 @@ func TestBusyFilesetIsRefusedWithoutWalking(t *testing.T) {
 	}
 }
 
+func TestUnresolvableGroupIsAConfigFailureBeforeAnyLock(t *testing.T) {
+	tr := setup(t)
+	prev := lookupGroupGID
+	lookupGroupGID = func(g string) (uint32, error) { return 0, fmt.Errorf("no such group %s", g) }
+	t.Cleanup(func() { lookupGroupGID = prev })
+
+	code, _, stderr := drive(t, tr.valid(t), false, true, nil)
+	if code != exitConfig || !strings.Contains(stderr, "reason=group-unresolvable") {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+	if lockExists() {
+		t.Fatal("lock taken before the group resolved")
+	}
+}
+
 func TestMissingLockDirIsAConfigFailure(t *testing.T) {
 	tr := setup(t)
+	useTestGID(t)
 	lockDir = filepath.Join(t.TempDir(), "absent")
 	if code, _, _ := drive(t, tr.valid(t), false, true, nil); code != exitConfig {
 		t.Fatalf("code %d", code)
@@ -145,6 +176,7 @@ func TestMissingLockDirIsAConfigFailure(t *testing.T) {
 
 func TestMissingFilesetIsAConfigFailure(t *testing.T) {
 	tr := setup(t)
+	useTestGID(t)
 	c := baseClaims()
 	c.Fileset = "nosuchfileset"
 	if code, _, _ := drive(t, tr.sign(t, c, testKID), false, true, nil); code != exitConfig {
