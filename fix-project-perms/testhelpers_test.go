@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -95,15 +96,40 @@ func requireRoot(t *testing.T) {
 	}
 }
 
-// The gid every repair in these tests targets. Arbitrary and unresolvable on
-// purpose: the walker takes a gid, and resolving the name is tested apart.
-const testGID = 4242
+// The gid every repair in these tests targets, and the cast of uids. All
+// arbitrary and unresolvable on purpose: the walker takes a gid and a member
+// set, the passwd lookup is stubbed, and resolving names is tested apart.
+const (
+	testGID     = 4242
+	victimUID   = 5001 // in project B only; never in A
+	attackerUID = 5002 // PI/manager of A, member of B
+	memberUID   = 5003 // an ordinary current member of A
+	departedUID = 5004 // was in A once; no longer in arc.<fileset>
+)
 
-func useTestGID(t *testing.T) {
+var testPasswd = map[uint32]passwdEntry{
+	0:           {name: "root", primaryGID: 0},
+	victimUID:   {name: "victim", primaryGID: victimUID},
+	attackerUID: {name: "attacker", primaryGID: attackerUID},
+	memberUID:   {name: "member", primaryGID: memberUID},
+	departedUID: {name: "departed", primaryGID: departedUID},
+}
+
+func testMembers() map[string]bool { return map[string]bool{"attacker": true, "member": true} }
+
+// useTestGroup stubs both lookups: arc.<fileset> -> testGID with the current
+// members above, and uid -> passwd for the cast. Nothing touches NSS.
+func useTestGroup(t *testing.T) {
 	t.Helper()
-	prev := lookupGroupGID
-	lookupGroupGID = func(string) (uint32, error) { return testGID, nil }
-	t.Cleanup(func() { lookupGroupGID = prev })
+	prevG, prevP := lookupGroupFn, lookupPasswdFn
+	lookupGroupFn = func(string) (uint32, map[string]bool, error) { return testGID, testMembers(), nil }
+	lookupPasswdFn = func(uid uint32) (passwdEntry, error) {
+		if e, ok := testPasswd[uid]; ok {
+			return e, nil
+		}
+		return passwdEntry{}, fmt.Errorf("uid %d: unknown", uid)
+	}
+	t.Cleanup(func() { lookupGroupFn, lookupPasswdFn = prevG, prevP })
 }
 
 // treeFile creates a regular file under the arcadm fileset with the given
@@ -123,7 +149,20 @@ func treeFile(t *testing.T, rel string, mode uint32) string {
 	if err := syscall.Chmod(p, mode); err != nil {
 		t.Fatal(err)
 	}
+	own(t, p, memberUID, memberUID)
 	return p
+}
+
+// own sets owner and group without following symlinks. Skips silently when
+// not root, so non-chown tests still run unprivileged.
+func own(t *testing.T, p string, uid, gid int) {
+	t.Helper()
+	if os.Geteuid() != 0 {
+		return
+	}
+	if err := os.Lchown(p, uid, gid); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func treeDir(t *testing.T, rel string, mode uint32) string {
@@ -135,6 +174,7 @@ func treeDir(t *testing.T, rel string, mode uint32) string {
 	if err := syscall.Chmod(p, mode); err != nil {
 		t.Fatal(err)
 	}
+	own(t, p, memberUID, memberUID)
 	return p
 }
 
@@ -153,12 +193,13 @@ func gidOf(t *testing.T, p string) uint32  { return lstatOf(t, p).Gid }
 // repairArcadm runs the walker over the fixture fileset with an optional hook.
 func repairArcadm(t *testing.T, hook func(dirfd int, name string)) *repairer {
 	t.Helper()
+	useTestGroup(t)
 	root, st, err := openTarget("arcadm")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer root.Close()
-	r := &repairer{gid: testGID, testHook: hook}
+	r := &repairer{gid: testGID, members: testMembers(), testHook: hook}
 	if err := r.run(context.Background(), root, st); err != nil {
 		t.Fatal(err)
 	}

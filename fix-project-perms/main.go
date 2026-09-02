@@ -39,6 +39,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -48,9 +49,25 @@ import (
 // check-to-act window. Nil in the shipped binary.
 var repairTestHook func(dirfd int, name string)
 
-// lookupGroupGID is indirected so tests can hand the walker a gid without a
-// resolvable group on the box.
-var lookupGroupGID = lookupGID
+// foreignUIDs renders the capped uid histogram for the audit line.
+func foreignUIDs(m map[uint32]int) string {
+	if len(m) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(m))
+	for uid, n := range m {
+		parts = append(parts, fmt.Sprintf("%d(x%d)", uid, n))
+		if len(parts) == 8 {
+			parts = append(parts, "...")
+			break
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+// lookupGroupFn is indirected so tests can hand the walker a gid and member
+// set without a resolvable group on the box.
+var lookupGroupFn = lookupGroup
 
 // isTerminal asks the kernel, not the file mode. /dev/null is a character
 // device too, and a service handing us an empty stdin must not be told it is
@@ -112,13 +129,13 @@ func run(ctx context.Context, stdin io.Reader, stdinIsTTY, apply bool, args []st
 	}
 
 	group := posixGroupPrefix + c.Fileset
-	gid, err := lookupGroupGID(group)
+	gid, members, err := lookupGroupFn(group)
 	if err != nil {
 		fields["reason"], fields["error"] = "group-unresolvable", err
 		audit.warn("denied", fields)
 		return exitConfig
 	}
-	fields["group"], fields["gid"] = group, gid
+	fields["group"], fields["gid"], fields["members"] = group, gid, len(members)
 
 	root, rootSt, err := openTarget(c.Fileset)
 	if err != nil {
@@ -147,24 +164,43 @@ func run(ctx context.Context, stdin io.Reader, stdinIsTTY, apply bool, args []st
 
 	fields["target"] = root.Name()
 
+	mode := "apply"
 	if !apply {
-		fields["mode"] = "dry-run"
-		audit.info("granted", fields)
-		fmt.Fprintf(stdout, "DRY-RUN would walk %s: group -> %s (gid %d), mode g+rwXs, on files and directories only, "+
-			"symlinks and other devices skipped, only entries not already correct touched\n", root.Name(), group, gid)
-		return exitOK
+		mode = "dry-run"
 	}
-
-	fields["mode"] = "apply"
+	fields["mode"] = mode
 	audit.info("granted", fields)
-	r := &repairer{gid: gid, testHook: repairTestHook}
+
+	// Dry-run walks too, read-only. A dry-run that only printed a plan would
+	// tell an operator nothing about what the legitimacy rule is going to
+	// refuse on a real fileset, and that is precisely what phase 3 exists to
+	// find out before anything is enabled.
+	r := &repairer{gid: gid, members: members, dryRun: !apply, testHook: repairTestHook}
 	err = r.run(ctx, root, rootSt)
 	fields["duration"] = since(started)
 	fields["stats"] = r.stats.String()
+	if r.stats.foreign > 0 {
+		// Loud and separate: foreign-owned entries under a project root are
+		// either drift worth a ticket or someone staging files, and both
+		// deserve to be seen.
+		audit.warn("foreign-owned", map[string]any{
+			"jti": c.ID, "sub": c.Subject, "fileset": c.Fileset,
+			"count": r.stats.foreign, "uids": foreignUIDs(r.stats.foreignUID),
+		})
+	}
 	if err != nil {
 		fields["outcome"], fields["error"] = "interrupted", err
 		audit.warn("completed", fields)
 		return exitRepair
+	}
+	if !apply {
+		fmt.Fprintf(stdout, "DRY-RUN %s: would change %d of %d entries (group -> %s gid %d, mode g+rwXs); "+
+			"skipped %d symlinks/special/other-device, %d foreign-owned, %d hardlinked; %d errors\n",
+			root.Name(), r.stats.changed, r.stats.seen+1, group, gid,
+			r.stats.skipped, r.stats.foreign, r.stats.hardlinked, r.stats.errors)
+		fields["outcome"] = "dry-run"
+		audit.info("completed", fields)
+		return exitOK
 	}
 	if r.stats.errors > 0 {
 		fields["outcome"] = "partial"

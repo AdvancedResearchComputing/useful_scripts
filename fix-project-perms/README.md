@@ -32,10 +32,13 @@ deployment owes it before it can do anything.
 6. Logs one `key=value` line per decision to syslog, carrying the token's
    `jti`. ColdFront logs the same `jti` when it mints, and Splunk joins the two.
 
-**Dry-run is the default.** Without `-apply` it verifies, takes and releases
-the lock, prints the exact command it would run, and exits 0 without touching
-a file. That is phase 3 of the rollout, and it is not optional: a verifier
-that has never been observed rejecting a bad token has not been tested.
+**Dry-run is the default.** Without `-apply` it verifies, takes the lock, walks
+the fileset **read-only**, and prints what it would change and what it would
+refuse -- how many entries, how many foreign-owned, how many hardlinked -- then
+exits 0 having touched nothing. That is phase 3 of the rollout, and it is not
+optional: a verifier that has never been observed rejecting a bad token has not
+been tested, and a repair that has never been observed refusing a foreign file
+on a real fileset has not been either.
 
 ## Why not `find -exec chmod … -exec chown …`
 
@@ -65,6 +68,43 @@ it touched; and special files are skipped rather than chmod'ed, since a project
 repair needs nothing from a FIFO and a root process has no business opening
 one (it would block forever).
 
+## What it will not touch: the legitimacy rule
+
+The repair widens group access on every inode it touches, so it must only
+touch inodes that are genuinely this project's data. The filesystem carries no
+provenance -- but it carries two facts an attacker **cannot forge on a file
+they do not own**: they cannot `chgrp` it, and they cannot change its uid.
+Either one is enough:
+
+- **the group is already `arc.<fileset>`** -- it was created inside the project
+  (setgid inheritance) or repaired before. A *departed* member's files
+  qualify, which is the primary use case.
+- **the owner is a current member of `arc.<fileset>`** -- their file, whatever
+  drift did to its group.
+
+Anything with neither is counted, named by uid in a separate audit line, and
+left exactly as it was. This is what closes the cross-project staging
+escalation on #162: a victim's `0600` file renamed in from another project the
+requester is merely a member of has neither signal, and comes out untouched.
+`go test` proves it, along with the cases the rule must not break.
+
+Also skipped: a regular file with more than one link. It is reachable by
+another name, possibly outside the fileset, and acting on the inode acts on
+every name.
+
+**The one legitimate case this refuses**, stated rather than hidden: a departed
+member's file whose group has *also* drifted. Rare -- removal-time repair
+handled departed users when they left -- and the complete fix is provenance in
+the token (a members claim from ColdFront), proposed on #162. Until then,
+refusing is the right failure; the alternative is the escalation.
+
+**The residual no ownership rule can close:** a victim who is themselves a
+current member of this project. Their staged file is indistinguishable from
+their own project data. That is bounded by provisioning -- sticky directories,
+and project filesets being independent GPFS filesets so a cross-project rename
+is `EXDEV` -- and both of those are proven and documented in the tests rather
+than assumed.
+
 ## What it refuses, always
 
 - Any positional argument. There is nothing a caller could legitimately say.
@@ -77,6 +117,8 @@ one (it would block forever).
 - A missing lock directory. **The binary never creates it** -- a binary that
   self-provisions can have every held lock evaporated by deleting the
   directory.
+- A file whose group is not the project's and whose owner is not a current
+  member, or a regular file with more than one link -- see the legitimacy rule.
 
 ## What it deliberately does not check
 
@@ -91,7 +133,7 @@ token: one fileset, obtainable only with that user's own ColdFront credential.
 
 | code | meaning | the service should say |
 | --- | --- | --- |
-| 0 | done (or dry-run printed) | |
+| 0 | done, or dry-run walked and reported | |
 | 2 | token rejected | not authorised |
 | 3 | another repair of this fileset is running | try again later |
 | 4 | trust dir, lock dir or fileset path not as deployed | tell an admin |

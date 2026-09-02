@@ -194,7 +194,8 @@ func TestEntriesOnAnotherDeviceAreSkipped(t *testing.T) {
 	defer root.Close()
 	// Pretend the root is on some other device: everything under it is then
 	// "across a mount" and must be left alone.
-	r := &repairer{gid: testGID}
+	useTestGroup(t)
+	r := &repairer{gid: testGID, members: testMembers()}
 	r.rootDev = uint64(st.Dev) + 1
 	r.apply(int(root.Fd()), st, root.Name()) // root itself, as run() would
 	if err := r.walk(context.Background(), root); err != nil {
@@ -219,7 +220,7 @@ func TestCancellationStopsTheWalk(t *testing.T) {
 	defer root.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	r := &repairer{gid: testGID}
+	r := &repairer{gid: testGID, members: testMembers()}
 	if err := r.run(ctx, root, st); err == nil {
 		t.Fatal("cancelled walk reported success")
 	}
@@ -250,11 +251,15 @@ func TestOpenTargetRefusals(t *testing.T) {
 }
 
 func TestParseGetentGroup(t *testing.T) {
-	if gid, err := parseGetentGroup([]byte("arc.arcadm:*:31337:alice,bob\n"), "arc.arcadm"); err != nil || gid != 31337 {
-		t.Fatalf("got %d, %v", gid, err)
+	gid, members, err := parseGetentGroup([]byte("arc.arcadm:*:31337:alice,bob\n"), "arc.arcadm")
+	if err != nil || gid != 31337 || !members["alice"] || !members["bob"] || len(members) != 2 {
+		t.Fatalf("got %d %v, %v", gid, members, err)
+	}
+	if _, members, err := parseGetentGroup([]byte("arc.empty:*:5:\n"), "arc.empty"); err != nil || len(members) != 0 {
+		t.Fatalf("empty member list: %v %v", members, err)
 	}
 	for _, bad := range []string{"", "arc.other:*:1:", "arc.arcadm:*:notanumber:", "garbage"} {
-		if _, err := parseGetentGroup([]byte(bad), "arc.arcadm"); err == nil {
+		if _, _, err := parseGetentGroup([]byte(bad), "arc.arcadm"); err == nil {
 			t.Errorf("%q parsed", bad)
 		}
 	}

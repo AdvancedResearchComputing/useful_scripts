@@ -55,15 +55,20 @@ func TestBadTokenIsRefusedAndLogged(t *testing.T) {
 
 func TestDryRunVerifiesLocksPrintsAndTouchesNothing(t *testing.T) {
 	tr := setup(t)
-	useTestGID(t)
+	useTestGroup(t)
 	f := treeFile(t, "f", 0o600)
 
 	code, stdout, stderr := drive(t, tr.valid(t), false, false, nil)
 	if code != exitOK {
 		t.Fatalf("code %d, stderr %s", code, stderr)
 	}
-	if !strings.Contains(stdout, "DRY-RUN would walk") || !strings.Contains(stdout, filepath.Join(projectsRoot, "arcadm")) {
+	if !strings.Contains(stdout, "DRY-RUN") || !strings.Contains(stdout, "would change") || !strings.Contains(stdout, filepath.Join(projectsRoot, "arcadm")) {
 		t.Fatalf("dry-run output: %q", stdout)
+	}
+	// It walked -- the file needs changing and the count says so -- but it
+	// touched nothing.
+	if !strings.Contains(stdout, "would change 2 of") { // root dir + f
+		t.Fatalf("dry-run did not walk and count: %q", stdout)
 	}
 	if permOf(t, f) != 0o600 {
 		t.Fatal("dry-run modified a file")
@@ -79,7 +84,7 @@ func TestDryRunVerifiesLocksPrintsAndTouchesNothing(t *testing.T) {
 func TestApplyRunsTheRepairAndReleasesTheLock(t *testing.T) {
 	requireRoot(t)
 	tr := setup(t)
-	useTestGID(t)
+	useTestGroup(t)
 	f := treeFile(t, "f", 0o640)
 
 	code, _, stderr := drive(t, tr.valid(t), false, true, nil)
@@ -103,7 +108,7 @@ func TestApplyRunsTheRepairAndReleasesTheLock(t *testing.T) {
 func TestApplyReportsPartialFailureAndStillReleases(t *testing.T) {
 	requireRoot(t)
 	tr := setup(t)
-	useTestGID(t)
+	useTestGroup(t)
 	treeDir(t, "dswap", 0o700)
 	treeFile(t, "dswap/child", 0o600)
 	prev := repairTestHook
@@ -130,7 +135,7 @@ func TestApplyReportsPartialFailureAndStillReleases(t *testing.T) {
 
 func TestBusyFilesetIsRefusedWithoutWalking(t *testing.T) {
 	tr := setup(t)
-	useTestGID(t)
+	useTestGroup(t)
 	f := treeFile(t, "f", 0o600)
 	held, err := acquireLock("arcadm")
 	if err != nil {
@@ -152,9 +157,9 @@ func TestBusyFilesetIsRefusedWithoutWalking(t *testing.T) {
 
 func TestUnresolvableGroupIsAConfigFailureBeforeAnyLock(t *testing.T) {
 	tr := setup(t)
-	prev := lookupGroupGID
-	lookupGroupGID = func(g string) (uint32, error) { return 0, fmt.Errorf("no such group %s", g) }
-	t.Cleanup(func() { lookupGroupGID = prev })
+	prev := lookupGroupFn
+	lookupGroupFn = func(g string) (uint32, map[string]bool, error) { return 0, nil, fmt.Errorf("no such group %s", g) }
+	t.Cleanup(func() { lookupGroupFn = prev })
 
 	code, _, stderr := drive(t, tr.valid(t), false, true, nil)
 	if code != exitConfig || !strings.Contains(stderr, "reason=group-unresolvable") {
@@ -167,7 +172,7 @@ func TestUnresolvableGroupIsAConfigFailureBeforeAnyLock(t *testing.T) {
 
 func TestMissingLockDirIsAConfigFailure(t *testing.T) {
 	tr := setup(t)
-	useTestGID(t)
+	useTestGroup(t)
 	lockDir = filepath.Join(t.TempDir(), "absent")
 	if code, _, _ := drive(t, tr.valid(t), false, true, nil); code != exitConfig {
 		t.Fatalf("code %d", code)
@@ -176,7 +181,7 @@ func TestMissingLockDirIsAConfigFailure(t *testing.T) {
 
 func TestMissingFilesetIsAConfigFailure(t *testing.T) {
 	tr := setup(t)
-	useTestGID(t)
+	useTestGroup(t)
 	c := baseClaims()
 	c.Fileset = "nosuchfileset"
 	if code, _, _ := drive(t, tr.sign(t, c, testKID), false, true, nil); code != exitConfig {
