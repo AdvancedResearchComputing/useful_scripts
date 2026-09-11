@@ -1,5 +1,8 @@
 #!/bin/bash
 
+YELLOW=$(tput setaf 3)
+NC=$(tput sgr0)
+
 show_usage() {
   echo "Usage:"
   echo "  getusage --account <slurm_account_name>"
@@ -7,8 +10,12 @@ show_usage() {
   echo "  getusage --user <VT_pid> (PID/username of the VT user)"
   echo "Optional:"
   echo "  --cluster <cluster_name> (tinkercliffs, owl, falcon)"
+  echo "  --include-paid (with --pi, include paid allocations from ColdFront)"
   exit 0
 }
+
+# User actually executing the command.
+CURRENT_USER=$(id -un)
 
 # Parse arguments
 ACCOUNT=""
@@ -58,6 +65,10 @@ while [[ $# -gt 0 ]]; do
         show_usage
       fi
       ;;
+    --include-paid)
+      INCLUDE_PAID=1
+      shift
+      ;;
     *)
       show_usage
       ;;
@@ -72,6 +83,12 @@ num_args_set=0
 
 if [[ $num_args_set -ne 1 ]]; then
   show_usage
+fi
+
+# --include-paid is only valid with --pi.
+if [[ "$INCLUDE_PAID" -eq 1 && -z "$PI" ]]; then
+  echo "ERROR: --include-paid can only be used with --pi."
+  exit 1
 fi
 
 getParentAccountUsage() {  
@@ -227,6 +244,7 @@ getAccountUsage() {
   printf "    Account running:   %'12.2f --> Service Units committed for completing running jobs\n" "$run_hrs"
   printf "    Account used:      %'12.2f (%s%%)\n" "$used_hrs" "$used_pct"
   printf "    Account available: %'12.2f (%s%%)\n" "$avail_hrs" "$avail_pct"
+
   if [[ "$1" != *-paid ]]; then
     actual_available=$(awk "BEGIN {
     parent = $parent_total_hrs - $parent_used_hrs - $parent_run_hrs;
@@ -261,6 +279,82 @@ getAccountUsage() {
 
     printf "      %-15s Used: %'12.2f h | Running: %'12.2f h\n" "$user" "$u_used_hrs" "$u_run_hrs"
   done
+}
+
+# Supplement --pi account discovery with paid allocations from ColdFront.
+# ColdFront is used only to discover paid Slurm accounts that are not children of __${PI}__ in the Slurm account hierarchy.
+getColdFrontPaidAccounts() {
+  local pi="$1"
+  local cache_dir=".arc_quota"
+  local token_file="/home/${pi}/${cache_dir}/token"
+
+  # Keep the existing Slurm-only behavior if the ColdFront token
+  # cannot be read.
+  if [[ ! -r "$token_file" ]]; then
+    echo "ERROR: Cannot read ColdFront token: $token_file" >&2
+    return 0
+  fi
+
+  local response
+  response=$(curl -sk -w "%{http_code}" \
+    "https://coldfront.arc.vt.edu/api/arc/quota/" \
+    -H "Authorization: Token $(cat "$token_file")" \
+    2>/dev/null)
+
+  local http_code="${response: -3}"
+
+  if [[ "$http_code" != "200" ]]; then
+    echo "ERROR: ColdFront API returned HTTP $http_code" >&2
+    return 0
+  fi
+
+  local json="${response%???}"
+
+  echo "$json" | python3 <(cat <<'EOF'
+import sys
+import json
+
+def get_attr(attributes, attr_type, field="value"):
+    return [
+        a[field]
+        for a in attributes
+        if a.get("allocation_attribute_type") == attr_type
+        and field in a
+    ]
+
+try:
+    allocations = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+
+for alloc in allocations:
+    # Compute allocations only.
+    if alloc.get("resource_type") != "Cluster":
+        continue
+
+    # Same behavior as quota: ignore revoked allocations.
+    if alloc.get("status") == "Revoked":
+        continue
+
+    attrs = alloc.get("allocation_attribute", [])
+    accounts = get_attr(attrs, "slurm_account_name")
+
+    if not accounts:
+        continue
+
+    account = accounts[0]
+
+    # We only need ColdFront to supplement the paid account case.
+    if not account.endswith("-paid"):
+        continue
+
+    # Preserve the cluster association from ColdFront.
+    for entry in alloc.get("compute_usage", []):
+        cluster = entry.get("cluster")
+        if cluster:
+            print(f"{account}|{cluster}")
+EOF
+)
 }
 
 # Perform action based on input
@@ -311,6 +405,28 @@ elif [[ -n "$USER" ]]; then
   done
 
 elif [[ -n "$PI" ]]; then
+
+  coldfront_paid_accounts=""
+
+  if [[ "$INCLUDE_PAID" -eq 1 ]]; then
+
+    # A PI may read their own ColdFront token without sudo.
+    # Looking up another PI's paid allocations requires root so that
+    # their ~/.arc_quota/token can be read.
+    if [[ "$PI" != "$CURRENT_USER" && "$(id -u)" -ne 0 ]]; then
+      echo "${YELLOW}WARNING: Paid allocation information for another PI requires sudo/root, we respect all users' privacy.${NC}"
+      echo "Run:"
+      echo "  sudo $0 --pi $PI --include-paid${CLUSTER:+ --cluster $CLUSTER}"
+      exit 1
+    fi
+
+    coldfront_paid_accounts=$(getColdFrontPaidAccounts "$PI") || exit 1
+
+  else
+    echo "${YELLOW}NOTE: Paid allocations are not included. Add \"--include-paid\" to see if PI has paid allocations.${NC}"
+    echo
+  fi
+
   for cluster in tinkercliffs owl falcon; do
     if [[ -n "$CLUSTER" && "$CLUSTER" != "$cluster" ]]; then
             continue
@@ -350,6 +466,30 @@ elif [[ -n "$PI" ]]; then
 
     children=$(sacctmgr show assoc format=account,parentname,grpsubmit -np cluster="$cluster" | awk -F'|' -v parentname="__${PI}__" '$2 == parentname && $3 != 0 {print $1}')
 
+    paid_accounts=""
+
+    if [[ "$INCLUDE_PAID" -eq 1 ]]; then
+
+      # Supplement paid account discovery with ColdFront.
+      while IFS='|' read -r paid_account paid_cluster; do
+        [[ -z "$paid_account" ]] && continue
+
+        # Only use allocations associated with this cluster.
+        [[ "$paid_cluster" != "$cluster" ]] && continue
+
+        base_account="${paid_account%-paid}"
+
+        # A paid account foo-paid is included only when the normal
+        # account foo belongs to this PI in the Slurm hierarchy.
+        if echo "$children" | grep -Fxq "$base_account"; then
+          paid_accounts="${paid_accounts} ${paid_account}"
+        fi
+
+      done <<< "$coldfront_paid_accounts"
+
+    fi
+
+    # Existing free/normal accounts.
     for ACCOUNT in $children; do
 
         # stash stale personal associations 
@@ -360,6 +500,13 @@ elif [[ -n "$PI" ]]; then
         getAccountUsage "$ACCOUNT" "$cluster"
         echo
     done
+
+    # getting paid allocations through ColdFront.
+    for ACCOUNT in $paid_accounts; do
+        getAccountUsage "$ACCOUNT" "$cluster"
+        echo
+    done
+
     echo
   done
 fi
