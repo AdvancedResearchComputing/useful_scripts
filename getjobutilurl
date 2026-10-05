@@ -88,7 +88,7 @@ while IFS= read -r line; do
   if [ -n "$gpu_idx_raw" ]; then
       gpu_idx_expanded=$(expand_idx_list "$gpu_idx_raw")
   fi
-  echo $gpu_idx_expanded
+  echo "Slurm GPU IDX: $gpu_idx_expanded"
 
       
   #Hard coded mapping for A100 HPE nodes
@@ -225,6 +225,6 @@ do
   printf "%s:\n" "${C}${NN}${R}"
   echo "  ${DASHBOARD_URL}?var-interval=1m&orgId=1&from=${FROM_UTC}&to=${TO_PARAM}&timezone=browser&var-hostname=${NN}"
   echo "  ${C}CPU IDs:${R} ${NN_CPU_IDS:-Unknown}"
-  echo "  ${C}GPU IDX:${R} ${NN_GPU_IDX:-Unknown}"
+  echo "  ${C}GPU IDX (Grafana):${R} ${NN_GPU_IDX:-Unknown}"
   echo
 done
