@@ -22,6 +22,7 @@ ACCOUNT=""
 PI=""
 USER=""
 CLUSTER=""
+INCLUDE_PAID=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -90,6 +91,16 @@ if [[ "$INCLUDE_PAID" -eq 1 && -z "$PI" ]]; then
   echo "ERROR: --include-paid can only be used with --pi."
   exit 1
 fi
+
+# Check whether the Slurm controller for a cluster is reachable.
+#
+# This prevents getusage from treating a failed remote-cluster query
+# as genuine zero usage when running from a compute node.
+clusterReachable() {
+  local cluster="$1"
+
+  scontrol -M "$cluster" ping >/dev/null 2>&1
+}
 
 getParentAccountUsage() {  
   local sshare_output
@@ -376,7 +387,15 @@ if [[ -n "$ACCOUNT" ]]; then
       if [[ -n "$CLUSTER" && "$CLUSTER" != "$cluster" ]]; then
           continue
       fi
+
       echo "Cluster: $cluster"
+
+      if ! clusterReachable "$cluster"; then
+          echo "${YELLOW}  WARNING: Unable to query usage for $cluster from this node. Try running getusage from a login node.${NC}"
+          echo
+          continue
+      fi
+
       getAccountUsage "${ACCOUNT}" "$cluster"
       echo
   done
@@ -387,9 +406,15 @@ elif [[ -n "$USER" ]]; then
           continue
       fi
 
-      accounts=$(sacctmgr show assoc where user="${USER}" format=account -nP cluster="$cluster")
-
       echo "Cluster: $cluster"
+
+      if ! clusterReachable "$cluster"; then
+          echo "${YELLOW}  WARNING: Unable to query usage for $cluster from this node. Try running getusage from a login node.${NC}"
+          echo
+          continue
+      fi
+
+      accounts=$(sacctmgr show assoc where user="${USER}" format=account -nP cluster="$cluster")
 
       for ACCOUNT in $accounts; do
 
@@ -431,7 +456,15 @@ elif [[ -n "$PI" ]]; then
     if [[ -n "$CLUSTER" && "$CLUSTER" != "$cluster" ]]; then
             continue
     fi
+
     echo "Cluster: $cluster"
+
+    if ! clusterReachable "$cluster"; then
+      echo "${YELLOW}  WARNING: Unable to query usage for $cluster from this node. Try running getusage from a login node.${NC}"
+      echo
+      continue
+    fi
+
     ## Free accounts
     read total_hrs used_hrs run_hrs <<< "$(getParentAccountUsage __${PI}__ $cluster)"  
     
@@ -441,6 +474,7 @@ elif [[ -n "$PI" ]]; then
     fi
 
     avail_hrs=$(awk "BEGIN {diff = $total_hrs - $used_hrs - $run_hrs; printf \"%.2f\", (diff > 0 ? diff : 0)}")
+
     used_pct=$(awk "BEGIN {
         if ($total_hrs == 0)
             printf \"0.0\";
