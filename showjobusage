@@ -341,9 +341,11 @@ for node_name in "${NODE_NAME[@]}"; do
     output=""
     if [[ "$user" == "$USER" ]]; then
       if [[ -v NODE_GPUS[$node_name] && -n "${NODE_GPUS[$node_name]// }" ]]; then
-        output=$(timeout 60s srun --jobid="$jobid" --overlap bash -c "showjobprocessesusage $jobid 1" 2>/dev/null || true)
+        # output=$(timeout 60s srun --jobid="$jobid" --overlap bash -c "showjobprocessesusage $jobid 1" 2>/dev/null || true)
+        output=$(timeout 60s srun --jobid="$jobid" --overlap --nodes=1 --ntasks=1 --nodelist="$node_name" bash -c "showjobprocessesusage $jobid 1" 2>/dev/null || true)
       else
-        output=$(timeout 60s srun --jobid="$jobid" --overlap bash -c "showjobprocessesusage $jobid 0" 2>/dev/null || true)
+        # output=$(timeout 60s srun --jobid="$jobid" --overlap bash -c "showjobprocessesusage $jobid 0" 2>/dev/null || true)
+        output=$(timeout 60s srun --jobid="$jobid" --overlap --nodes=1 --ntasks=1 --nodelist="$node_name" bash -c "showjobprocessesusage $jobid 0" 2>/dev/null || true)
       fi
     else
       if [[ -v NODE_GPUS[$node_name] && -n "${NODE_GPUS[$node_name]// }" ]]; then
@@ -393,7 +395,7 @@ for node_name in "${NODE_NAME[@]}"; do
     # === GPU stats collection ===
     if [[ -v NODE_GPUS[$node_name] && -n "${NODE_GPUS[$node_name]// }" ]]; then
         if [[ "$user" == "$USER" ]]; then
-          nvidia_out=$(timeout 60s srun --jobid="$jobid" --overlap bash -c \
+          nvidia_out=$(timeout 60s srun --jobid="$jobid" --overlap --nodes=1 --ntasks=1 --nodelist="$node_name" bash -c \
             "nvidia-smi --query-gpu=index,memory.total,memory.used,utilization.gpu \
              --format=csv,noheader,nounits" 2>/dev/null || true)
         else
