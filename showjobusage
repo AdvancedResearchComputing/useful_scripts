@@ -241,6 +241,8 @@ declare -A NODE_TOTAL_MEM=()
 declare -A GPU_TOTAL_MEM=()
 declare -A GPU_USED_MEM=()
 declare -A GPU_UTIL=()
+declare -A NODE_MEM_LIMIT=()
+declare -A NODE_MEM_PEAK=()
    
 #A100 HPE GPU SLURM to NVIDIA-SMI Mapping
 declare -A MAP=(
@@ -392,6 +394,34 @@ for node_name in "${NODE_NAME[@]}"; do
 
     NODE_TOTAL_CPU["$node_name"]="$total_cpu"
 
+    # === cgroup memory stats ===
+    cgroup_path="/sys/fs/cgroup/system.slice/slurmstepd.scope/job_${jobid}"
+
+    cgroup_mem=""
+    if [[ "$user" == "$USER" ]]; then
+        cgroup_mem=$(timeout 60s srun \
+            --jobid="$jobid" \
+            --overlap \
+            --nodes=1 \
+            --ntasks=1 \
+            --nodelist="$node_name" \
+            bash -c \
+            "cat '$cgroup_path/memory.max' 2>/dev/null || echo N/A
+            cat '$cgroup_path/memory.peak' 2>/dev/null || echo N/A" \
+            2>/dev/null || true)
+    else
+        cgroup_mem=$(timeout 60s ssh "$node_name" \
+            "cat '$cgroup_path/memory.max' 2>/dev/null || echo N/A
+            cat '$cgroup_path/memory.peak' 2>/dev/null || echo N/A" \
+            2>/dev/null || true)
+    fi
+
+    mem_limit_bytes=$(sed -n '1p' <<< "$cgroup_mem" | tr -d '[:space:]')
+    mem_peak_bytes=$(sed -n '2p' <<< "$cgroup_mem" | tr -d '[:space:]')
+
+    NODE_MEM_LIMIT["$node_name"]="${mem_limit_bytes:-N/A}"
+    NODE_MEM_PEAK["$node_name"]="${mem_peak_bytes:-N/A}"
+
     # === GPU stats collection ===
     if [[ -v NODE_GPUS[$node_name] && -n "${NODE_GPUS[$node_name]// }" ]]; then
         if [[ "$user" == "$USER" ]]; then
@@ -502,6 +532,30 @@ for i in "${!NODE_NAME[@]}"; do
 
   total_cpu="${NODE_TOTAL_CPU[$node]:-0}"
   total_mem="${NODE_TOTAL_MEM[$node]:-0}"
+
+  mem_limit_bytes="${NODE_MEM_LIMIT[$node]:-N/A}"
+  mem_peak_bytes="${NODE_MEM_PEAK[$node]:-N/A}"
+
+  mem_limit_mib="N/A"
+  mem_peak_mib="N/A"
+  mem_peak_pct="N/A"
+
+  if [[ "$mem_limit_bytes" =~ ^[0-9]+$ ]]; then
+      mem_limit_mib=$(awk -v b="$mem_limit_bytes" \
+          'BEGIN {printf "%.0f", b / 1024 / 1024}')
+  fi
+
+  if [[ "$mem_peak_bytes" =~ ^[0-9]+$ ]]; then
+      mem_peak_mib=$(awk -v b="$mem_peak_bytes" \
+          'BEGIN {printf "%.0f", b / 1024 / 1024}')
+  fi
+
+  if [[ "$mem_limit_bytes" =~ ^[0-9]+$ && "$mem_peak_bytes" =~ ^[0-9]+$ && "$mem_limit_bytes" -gt 0 ]]; then
+      mem_peak_pct=$(awk -v p="$mem_peak_bytes" -v l="$mem_limit_bytes" \
+          'BEGIN {printf "%.2f", p * 100 / l}')
+  fi
+
+
   cpu_util_pct="$(awk "BEGIN {print $total_cpu/$cpus}")"
   mem_util_pct="$(awk "BEGIN {print $total_mem*100/$mem_val}")"
 
@@ -514,6 +568,21 @@ for i in "${!NODE_NAME[@]}"; do
          "$(printf "%.0f / %d" "$total_mem" "$mem_val")" \
          "$(printf "%3.2f%%" "$mem_util_pct")"
   echo
+  if [[ "$mem_peak_mib" != "N/A" ]]; then
+    if [[ "$mem_limit_mib" != "N/A" && "$mem_peak_pct" != "N/A" ]]; then
+        printf "    %-13s  %s / %s MiB (%s%%)\n" \
+            "MEM PEAK:" "$mem_peak_mib" "$mem_limit_mib" "$mem_peak_pct"
+    elif [[ "$mem_limit_bytes" == "max" ]]; then
+        printf "    %-13s  %s MiB (no cgroup limit)\n" \
+            "MEM PEAK:" "$mem_peak_mib"
+    else
+        printf "    %-13s  %s MiB (limit unavailable)\n" \
+            "MEM PEAK:" "$mem_peak_mib"
+    fi
+  else
+    printf "    %-13s  unavailable (cgroup memory.peak not readable)\n" \
+        "MEM PEAK:"
+  fi
 
   # --- prepare sorted unique GPU indexes seen for this node ---
   # mapfile the sorted keys (numeric sort)
@@ -622,4 +691,3 @@ mapfile -t seen_gpu_idxs < <(printf "%s\n" "${!SEEN_GPUS[@]}" | sort -n)
 done
 
 exit 0
-
