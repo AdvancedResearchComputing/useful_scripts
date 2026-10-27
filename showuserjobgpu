@@ -17,6 +17,14 @@ if [ -z "$JOBS" ]; then
     exit 0
 fi
 
+#A100 HPE GPU SLURM to NVIDIA-SMI Mapping
+declare -A MAP=(
+[0]=2  [2]=0
+[1]=3  [3]=1
+[4]=6  [6]=4
+[5]=7  [7]=5
+)
+
 # expand Slurm-style GPU index ranges into comma-separated values for nvidia-smi
 expand_gpu_ids_for_nvidia_smi() {
     local raw="$1"
@@ -51,8 +59,18 @@ parse_job_node_gpu_map() {
         nodes_expr="$(echo "$line" | grep -oE 'Nodes=[^ ]+' | cut -d= -f2 || true)"
         gpu_ids="$(echo "$line" | sed -n 's/.*IDX:\([^)]*\).*/\1/p' | head -n 1 || true)"
 
+
         [[ -z "${nodes_expr:-}" ]] && continue
         [[ -z "${gpu_ids:-}" ]] && continue
+        
+        # Hard coded fix for A100 HPE gpu mapping
+        {
+            if [[ $nodes_expr == "tc-gpu001" || $nodes_expr == "tc-gpu002" || $nodes_expr == "tc-gpu003" || $nodes_expr == "tc-gpu004" ]]; then  
+                gpu_ids="${MAP[$gpu_ids]:-$gpu_ids}"
+
+            fi
+        }
+        
 
         for host in $(scontrol show hostnames "$nodes_expr" 2>/dev/null); do
             NODE_GPU_IDS["$host"]="$gpu_ids"
@@ -113,6 +131,7 @@ while IFS='|' read -r JOBID NODELIST JOBSTATE; do
     # ------------------------------------------------------------
     for node in $NODES; do
         GPU_IDS="${NODE_GPU_IDS[$node]:-}"
+
         [[ -z ${GPU_IDS:-} ]] && continue          # no GPU on this node → skip
 
         # Convert something like “0-2,4” into a list that `nvidia‑smi -i`
